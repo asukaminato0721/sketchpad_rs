@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, Tool};
 use crate::render::Viewport;
 use sketchpad_engine::document::{
@@ -113,28 +114,28 @@ impl Editor {
     }
 
     pub(super) fn custom_tools_menu(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Create New Tool…").clicked() {
+        if ui.button(tr("Create New Tool…")).clicked() {
             self.create_tool_dialog = true;
             self.tool_name_draft.clear();
             ui.close();
         }
         ui.separator();
-        ui.label("Current Document");
+        ui.label(tr("Current Document"));
         match self.doc.embedded_tools() {
             Ok(tools) if tools.is_empty() => {
-                ui.label("No custom tools in this document");
+                ui.label(tr("No custom tools in this document"));
             }
             Ok(tools) => {
                 for (index, tool) in tools.iter().enumerate() {
                     ui.menu_button(tool_name(index, tool), |ui| {
                         if let Some(inputs) = &tool.input_ids {
-                            ui.label(format!("{} input(s), in order", inputs.len()));
+                            ui.label(tr(format!("{} input(s), in order", inputs.len())));
                         }
-                        if ui.button("Apply to Selected Inputs").clicked() {
+                        if ui.button(tr("Apply to Selected Inputs")).clicked() {
                             self.invoke_selected_tool(ToolSource::Embedded(index));
                             ui.close();
                         }
-                        if ui.button("Choose Inputs by Clicking").clicked() {
+                        if ui.button(tr("Choose Inputs by Clicking")).clicked() {
                             self.begin_custom_tool(ToolSource::Embedded(index));
                             ui.close();
                         }
@@ -174,20 +175,20 @@ impl Editor {
                 })
                 .collect::<Vec<_>>();
             ui.separator();
-            ui.label(format!("Tool Folder: {}", folder.path.display()));
+            ui.label(tr(format!("Tool Folder: {}", folder.path.display())));
             if entries.is_empty() {
-                ui.label("No custom tools in this folder");
+                ui.label(tr("No custom tools in this folder"));
             }
             for (source, name, input_count, file_name) in entries {
-                ui.menu_button(format!("{name} — {file_name}"), |ui| {
+                ui.menu_button(tr(format!("{name} — {file_name}")), |ui| {
                     if let Some(input_count) = input_count {
-                        ui.label(format!("{input_count} input(s), in order"));
+                        ui.label(tr(format!("{input_count} input(s), in order")));
                     }
-                    if ui.button("Apply to Selected Inputs").clicked() {
+                    if ui.button(tr("Apply to Selected Inputs")).clicked() {
                         self.invoke_selected_tool(source);
                         ui.close();
                     }
-                    if ui.button("Choose Inputs by Clicking").clicked() {
+                    if ui.button(tr("Choose Inputs by Clicking")).clicked() {
                         self.begin_custom_tool(source);
                         ui.close();
                     }
@@ -195,14 +196,14 @@ impl Editor {
             }
         }
         ui.separator();
-        if ui.button("Choose Tool Folder…").clicked() {
+        if ui.button(tr("Choose Tool Folder…")).clicked() {
             self.choose_tool_folder();
             ui.close();
         }
         if ui
             .add_enabled(
                 self.tool_folder.is_some(),
-                egui::Button::new("Forget Tool Folder"),
+                egui::Button::new(tr("Forget Tool Folder")),
             )
             .clicked()
         {
@@ -266,15 +267,15 @@ impl Editor {
         let mut create = false;
         let mut cancel = false;
         egui::Modal::new(egui::Id::new("create_custom_tool")).show(root.ctx(), |ui| {
-            ui.heading("Create New Tool");
-            ui.label("Use the selected construction to define a custom tool.");
+            ui.heading(tr("Create New Tool"));
+            ui.label(tr("Use the selected construction to define a custom tool."));
             ui.horizontal(|ui| {
-                ui.label("Name");
+                ui.label(tr("Name"));
                 ui.text_edit_singleline(&mut self.tool_name_draft);
             });
             ui.horizontal(|ui| {
-                create = ui.button("Create").clicked();
-                cancel = ui.button("Cancel").clicked();
+                create = ui.button(tr("Create")).clicked();
+                cancel = ui.button(tr("Cancel")).clicked();
             });
         });
         if cancel {

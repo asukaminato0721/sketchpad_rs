@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["result"]["protocolVersion"], VERSION);
         assert_eq!(messages[1]["id"], "list");
-        assert_eq!(messages[1]["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(messages[1]["result"]["tools"].as_array().unwrap().len(), 11);
         assert_eq!(messages[2]["result"]["structuredContent"]["dirty"], true);
         assert_eq!(calls, 1);
     }

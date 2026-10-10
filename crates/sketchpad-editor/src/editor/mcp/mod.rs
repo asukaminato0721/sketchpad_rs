@@ -1,5 +1,7 @@
 //! Opt-in MCP access to the document owned by the window thread.
+mod construction;
 mod protocol;
+use construction::{Construct, CreatePoint};
 
 use super::{Editor, Tool};
 use crate::render::{Viewport, svg_page_with_button_offset};
@@ -44,6 +46,8 @@ pub(super) enum ToolCall {
     ListObjects(ListObjects),
     InspectObject(ObjectId),
     SelectObjects(Selection),
+    CreatePoint(CreatePoint),
+    Construct(Construct),
     MovePoint(MovePoint),
     SetParameter(SetParameter),
     Undo(Empty),
@@ -184,11 +188,16 @@ pub(super) fn tool_list() -> Value {
             true,
         ),
     ];
-    json!({"tools": definitions.into_iter().map(|(name, description, properties, required, read_only)| json!({
+    let mut result = json!({"tools": definitions.into_iter().map(|(name, description, properties, required, read_only)| json!({
         "name":name, "description":description,
         "inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},
         "annotations":{"readOnlyHint":read_only,"destructiveHint":!read_only,"openWorldHint":false}
-    })).collect::<Vec<_>>()})
+    })).collect::<Vec<_>>()});
+    result["tools"]
+        .as_array_mut()
+        .unwrap()
+        .extend(construction::tool_definitions());
+    result
 }
 
 impl Editor {
@@ -272,6 +281,7 @@ impl Editor {
             Tool::Custom(source) => ("custom", Some(format!("{source:?}"))),
         };
         json!({
+            "ui_language":self.language.code(),
             "path":self.doc.path.as_ref().map(|path| path.to_string_lossy()), "dirty":self.doc.dirty,
             "active_page":self.doc.active_page + 1, "page_count":self.doc.page_count,
             "page_names":self.doc.page_names,
@@ -291,6 +301,8 @@ impl Editor {
         let mutating = matches!(
             call,
             ToolCall::SelectObjects(_)
+                | ToolCall::CreatePoint(_)
+                | ToolCall::Construct(_)
                 | ToolCall::MovePoint(_)
                 | ToolCall::SetParameter(_)
                 | ToolCall::Undo(_)
@@ -322,6 +334,8 @@ impl Editor {
                 )
             }
             ToolCall::InspectObject(args) => self.mcp_inspect(args.id),
+            ToolCall::CreatePoint(args) => self.mcp_create_point(args),
+            ToolCall::Construct(args) => self.mcp_construct(args),
             ToolCall::SelectObjects(args) => {
                 let selected: std::collections::BTreeSet<_> = args.ids.iter().copied().collect();
                 if args.ids.len() > 256 || selected.len() != args.ids.len() {

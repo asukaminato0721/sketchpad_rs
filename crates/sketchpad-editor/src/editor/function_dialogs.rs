@@ -1,4 +1,5 @@
 use super::Editor;
+use super::i18n::tr;
 use sketchpad_engine::document::Kind;
 use sketchpad_engine::function_records::{FunctionPlotMode, SimpleFunction};
 use sketchpad_engine::plot_points_records::PlotPointsMode;
@@ -105,16 +106,16 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("new_function")).show(root.ctx(), |ui| {
-                ui.heading(if edit_id.is_some() {
+                ui.heading(tr(if edit_id.is_some() {
                     "Edit function"
                 } else if plot {
                     "Plot new function"
                 } else {
                     "New function"
-                });
-                ui.label("f(x) =");
+                }));
+                ui.label(tr("f(x) ="));
                 ui.text_edit_singleline(&mut self.function_draft);
-                ui.label("Arithmetic in x; sin, cos, tan, asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants pi/π and e");
+                ui.label(tr("Arithmetic in x; sin, cos, tan, asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants pi/π and e"));
                 for (index, &source) in self.function_draft_sources.iter().enumerate() {
                     let object = &self.doc.objects[source - 1];
                     let alias = if self.doc.function_sources(source).is_some() {
@@ -126,19 +127,19 @@ impl Editor {
                         .or_else(|| self.doc.measurement_text(source))
                         .or_else(|| self.doc.numeric_value(source).map(|value| format!("{} = {value}", self.doc.parameter_display_name(source).unwrap_or_else(|| format!("Object {source}")))))
                         .unwrap_or_else(|| format!("Object {}", object.id));
-                    ui.label(format!("{alias}: {caption}"));
+                    ui.label(tr(format!("{alias}: {caption}")));
                 }
                 ui.horizontal(|ui| {
                     apply = ui
-                        .button(if edit_id.is_some() {
+                        .button(tr(if edit_id.is_some() {
                             "Update"
                         } else if plot {
                             "Plot"
                         } else {
                             "Create"
-                        })
+                        }))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -179,16 +180,16 @@ impl Editor {
             let mut choice = None;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("function_angle_unit")).show(root.ctx(), |ui| {
-                ui.heading("Angle unit for this function");
-                ui.label("The document currently uses degrees.");
+                ui.heading(tr("Angle unit for this function"));
+                ui.label(tr("The document currently uses degrees."));
                 ui.horizontal(|ui| {
-                    if ui.button("Switch to radians").clicked() {
+                    if ui.button(tr("Switch to radians")).clicked() {
                         choice = Some(true);
                     }
-                    if ui.button("Keep degrees").clicked() {
+                    if ui.button(tr("Keep degrees")).clicked() {
                         choice = Some(false);
                     }
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -217,16 +218,16 @@ impl Editor {
             let mut choice = None;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("derivative_angle_unit")).show(root.ctx(), |ui| {
-                ui.heading("Angle unit for this derivative");
-                ui.label("The document currently uses degrees.");
+                ui.heading(tr("Angle unit for this derivative"));
+                ui.label(tr("The document currently uses degrees."));
                 ui.horizontal(|ui| {
-                    if ui.button("Switch to radians").clicked() {
+                    if ui.button(tr("Switch to radians")).clicked() {
                         choice = Some(true);
                     }
-                    if ui.button("Keep degrees").clicked() {
+                    if ui.button(tr("Keep degrees")).clicked() {
                         choice = Some(false);
                     }
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -256,15 +257,15 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("plot_range")).show(root.ctx(), |ui| {
-                ui.heading("Plot properties");
+                ui.heading(tr("Plot properties"));
                 ui.horizontal(|ui| {
-                    ui.label("Domain");
+                    ui.label(tr("Domain"));
                     ui.add(egui::TextEdit::singleline(&mut self.plot_min_draft).desired_width(70.));
-                    ui.label(format!("≤ {variable} ≤"));
+                    ui.label(tr(format!("≤ {variable} ≤")));
                     ui.add(egui::TextEdit::singleline(&mut self.plot_max_draft).desired_width(70.));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Samples");
+                    ui.label(tr("Samples"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.plot_samples_draft).desired_width(70.),
                     );
@@ -273,21 +274,21 @@ impl Editor {
                     ui.radio_value(
                         &mut self.plot_presentation_draft.discrete,
                         false,
-                        "Continuously",
+                        tr("Continuously"),
                     );
                     ui.radio_value(
                         &mut self.plot_presentation_draft.discrete,
                         true,
-                        "Discretely",
+                        tr("Discretely"),
                     );
                     ui.checkbox(
                         &mut self.plot_presentation_draft.show_arrows_and_endpoints,
-                        "Show arrows and endpoints",
+                        tr("Show arrows and endpoints"),
                     );
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Apply")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -350,16 +351,14 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("parametric_curve")).show(root.ctx(), |ui| {
-                ui.heading("Plot parametric curve");
+                ui.heading(tr("Plot parametric curve"));
                 ui.horizontal(|ui| {
-                    ui.label("x(t) or r(t)");
+                    ui.label(tr("x(t) or r(t)"));
                     egui::ComboBox::from_id_salt("parametric_x")
-                        .selected_text(
-                            functions
-                                .iter()
-                                .find(|(id, _)| *id == self.parametric_x)
-                                .map_or("Select function", |(_, label)| label.as_str()),
-                        )
+                        .selected_text(tr(functions
+                            .iter()
+                            .find(|(id, _)| *id == self.parametric_x)
+                            .map_or("Select function", |(_, label)| label.as_str())))
                         .show_ui(ui, |ui| {
                             for (id, label) in &functions {
                                 ui.selectable_value(&mut self.parametric_x, *id, label);
@@ -367,14 +366,12 @@ impl Editor {
                         });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("y(t) or θ(t)");
+                    ui.label(tr("y(t) or θ(t)"));
                     egui::ComboBox::from_id_salt("parametric_y")
-                        .selected_text(
-                            functions
-                                .iter()
-                                .find(|(id, _)| *id == self.parametric_y)
-                                .map_or("Select function", |(_, label)| label.as_str()),
-                        )
+                        .selected_text(tr(functions
+                            .iter()
+                            .find(|(id, _)| *id == self.parametric_y)
+                            .map_or("Select function", |(_, label)| label.as_str())))
                         .show_ui(ui, |ui| {
                             for (id, label) in &functions {
                                 ui.selectable_value(&mut self.parametric_y, *id, label);
@@ -385,25 +382,29 @@ impl Editor {
                     ui.radio_value(
                         &mut self.parametric_mode,
                         PlotPointsMode::Cartesian,
-                        "Rectangular",
+                        tr("Rectangular"),
                     );
-                    ui.radio_value(&mut self.parametric_mode, PlotPointsMode::Polar, "Polar");
+                    ui.radio_value(
+                        &mut self.parametric_mode,
+                        PlotPointsMode::Polar,
+                        tr("Polar"),
+                    );
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Domain");
+                    ui.label(tr("Domain"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parametric_min_draft)
                             .desired_width(65.),
                     );
-                    ui.label("≤ t ≤");
+                    ui.label(tr("≤ t ≤"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parametric_max_draft)
                             .desired_width(65.),
                     );
                 });
                 ui.horizontal(|ui| {
-                    apply = ui.button("Plot").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Plot")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {

@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, SelectionMagnetism};
 use sketchpad_engine::document::{MeasurementPrecisionDefaults, ObjectClass, ObjectColorDefaults};
 use sketchpad_engine::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
@@ -153,8 +154,8 @@ impl Editor {
         let mut apply = false;
         let mut cancel = false;
         egui::Modal::new(egui::Id::new("preferences")).show(root.ctx(), |ui| {
-            ui.heading("Preferences");
-            ui.label("Units");
+            ui.heading(tr("Preferences"));
+            ui.label(tr("Units"));
             ui.separator();
             egui::Grid::new("preference_precision")
                 .num_columns(2)
@@ -174,35 +175,35 @@ impl Editor {
                             &mut self.preferences_draft.other_precision,
                         ),
                     ] {
-                        ui.label(label);
-                        ui.add(egui::Slider::new(precision, 0..=5).text("decimal places"));
+                        ui.label(tr(label));
+                        ui.add(egui::Slider::new(precision, 0..=5).text(tr("decimal places")));
                         ui.end_row();
                     }
                 });
             ui.add_space(8.);
-            ui.label("Tools");
+            ui.label(tr("Tools"));
             ui.separator();
             ui.checkbox(
                 &mut self.preferences_draft.double_click_deselection,
-                "Require a double-click in empty space to deselect",
+                tr("Require a double-click in empty space to deselect"),
             );
             ui.add_space(8.);
-            ui.label("Selection magnetism");
+            ui.label(tr("Selection magnetism"));
             ui.horizontal(|ui| {
                 ui.selectable_value(
                     &mut self.preferences_draft.selection_magnetism,
                     SelectionMagnetism::Low,
-                    "Low",
+                    tr("Low"),
                 );
                 ui.selectable_value(
                     &mut self.preferences_draft.selection_magnetism,
                     SelectionMagnetism::Medium,
-                    "Medium",
+                    tr("Medium"),
                 );
                 ui.selectable_value(
                     &mut self.preferences_draft.selection_magnetism,
                     SelectionMagnetism::High,
-                    "High",
+                    tr("High"),
                 );
             });
             ui.add(
@@ -210,72 +211,72 @@ impl Editor {
                     &mut self.preferences_draft.new_polygon_opacity,
                     0..=u16::MAX,
                 )
-                .text("New polygon opacity")
+                .text(tr("New polygon opacity"))
                 .custom_formatter(|value, _| format!("{:.0}%", value * 100. / 65535.)),
             );
             ui.add_space(8.);
-            ui.label("Color");
+            ui.label(tr("Color"));
             ui.separator();
             ui.checkbox(
                 &mut self.preferences_draft.update_colors_automatically,
-                "Update defaults when applying colors",
+                tr("Update defaults when applying colors"),
             );
             ui.checkbox(
                 &mut self.preferences_draft.randomize_interior_colors,
-                "Randomly color new interiors",
+                tr("Randomly color new interiors"),
             );
             egui::Grid::new("preference_colors")
                 .num_columns(2)
                 .spacing([12., 6.])
                 .show(ui, |ui| {
-                    ui.label("Sketch background");
+                    ui.label(tr("Sketch background"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.background_color);
                     ui.end_row();
-                    ui.label("Selection markers");
+                    ui.label(tr("Selection markers"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.selection_color);
                     ui.end_row();
-                    ui.label("New points");
+                    ui.label(tr("New points"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.point_color);
                     ui.end_row();
-                    ui.label("New lines, rays, and segments");
+                    ui.label(tr("New lines, rays, and segments"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.straight_color);
                     ui.end_row();
-                    ui.label("New circles and arcs");
+                    ui.label(tr("New circles and arcs"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.round_color);
                     ui.end_row();
-                    ui.label("New interiors");
+                    ui.label(tr("New interiors"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.interior_color);
                     ui.end_row();
-                    ui.label("New point loci");
+                    ui.label(tr("New point loci"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.point_locus_color);
                     ui.end_row();
-                    ui.label("New plots");
+                    ui.label(tr("New plots"));
                     ui.color_edit_button_srgb(&mut self.preferences_draft.plot_color);
                     ui.end_row();
                 });
             ui.checkbox(
                 &mut self.preferences_draft.fade_traces,
-                "Fade traces over time",
+                tr("Fade traces over time"),
             );
             ui.add_enabled(
                 self.preferences_draft.fade_traces,
                 egui::Slider::new(&mut self.preferences_draft.trace_fade_seconds, 0.5..=20.)
                     .logarithmic(true)
                     .suffix(" s")
-                    .text("Trace lifetime"),
+                    .text(tr("Trace lifetime")),
             );
             ui.add_space(8.);
-            ui.label("Text");
+            ui.label(tr("Text"));
             ui.separator();
             ui.checkbox(
                 &mut self.preferences_draft.show_text_palette_for_new_captions,
-                "Show the Text Palette when creating a caption",
+                tr("Show the Text Palette when creating a caption"),
             );
             ui.add_space(8.);
-            ui.weak("These settings apply to this editor session.");
+            ui.weak(tr("These settings apply to this editor session."));
             ui.horizontal(|ui| {
-                apply = ui.button("Apply").clicked();
-                cancel = ui.button("Cancel").clicked();
+                apply = ui.button(tr("Apply")).clicked();
+                cancel = ui.button(tr("Cancel")).clicked();
             });
         });
         if apply {

@@ -73,6 +73,7 @@ impl GraphicsState {
         surface.configure(&device, &config);
 
         let ctx = egui::Context::default();
+        super::chrome::apply_style(&ctx);
         let egui_state = egui_winit::State::new(
             ctx.clone(),
             ctx.viewport_id(),
@@ -259,13 +260,14 @@ impl GraphicsState {
 
 impl Editor {
     fn window_title(&self) -> String {
+        self.language.activate();
         let name = self
             .doc
             .path
             .as_deref()
             .and_then(std::path::Path::file_name)
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.untitled_name.into());
+            .unwrap_or_else(|| super::i18n::tr(self.untitled_name));
         format!(
             "{}{name} — Sketchpad RS",
             if self.doc.dirty { "*" } else { "" }
@@ -399,6 +401,7 @@ pub(crate) fn run() {
         mcp::start(event_loop.create_proxy());
     }
     let mut editor = Editor::new(doc);
+    editor.language = super::i18n::Language::load();
     editor.untitled_name = untitled_name;
     let mut application = Application {
         editor,

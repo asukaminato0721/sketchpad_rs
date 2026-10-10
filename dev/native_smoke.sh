@@ -72,9 +72,9 @@ xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
   test "$rendered" = true
   printf "Native window: %s\nCapture: %s.png\n" "$window_title" "$2"
   if [[ "$3" == demo || "$3" == save-demo ]]; then
-    xdotool mousemove --window "$window_id" 575 507 \
+    xdotool mousemove --window "$window_id" 497 507 \
       mousedown 1 \
-      mousemove --window "$window_id" 635 465 \
+      mousemove --window "$window_id" 557 465 \
       sleep 0.5 \
       mouseup 1
     changed_pixels=0

@@ -6,6 +6,7 @@ mod actions;
 mod animation;
 mod calculation_dialogs;
 mod canvas;
+mod chrome;
 mod colorized;
 mod construction;
 mod custom_tools;
@@ -14,6 +15,7 @@ mod document_dialogs;
 mod files;
 pub(crate) mod fonts;
 mod function_dialogs;
+mod i18n;
 mod mcp;
 mod measurements;
 mod menu;
@@ -139,7 +141,7 @@ impl Default for Preferences {
             selection_magnetism: SelectionMagnetism::Medium,
             update_colors_automatically: true,
             randomize_interior_colors: false,
-            background_color: [245, 247, 251],
+            background_color: [255, 255, 255],
             selection_color: [240, 82, 26],
             point_color: [255, 0, 0],
             straight_color: [0, 0, 128],
@@ -261,6 +263,9 @@ struct PresentationTrack {
     pause_remaining: f64,
 }
 struct Editor {
+    language: i18n::Language,
+    show_inspector: bool,
+    show_about: bool,
     doc: Document,
     evaluation_cache: std::cell::RefCell<sketchpad_engine::document::EvaluationCache>,
     untitled_name: &'static str,
@@ -427,7 +432,17 @@ impl Editor {
         } else {
             self.doc.undo();
         }
+        self.doc.selected.retain(|id| {
+            self.doc
+                .objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|object| {
+                    *id > 0 && !object.deleted && object.page == self.doc.active_page
+                })
+        });
         self.reset_custom_tool_after_history();
+        self.pending = None;
+        self.inspected = None;
         self.image_textures.clear();
     }
 
@@ -438,6 +453,9 @@ impl Editor {
     fn new(doc: Document) -> Self {
         let custom_transforms = custom_transforms::native_custom_transforms(&doc);
         let mut e = Self {
+            language: i18n::Language::English,
+            show_inspector: false,
+            show_about: false,
             doc,
             evaluation_cache: Default::default(),
             untitled_name: "Untitled",

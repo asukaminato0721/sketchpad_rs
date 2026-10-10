@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, is_circle_construction_host};
 use sketchpad_engine::document::Kind;
 use sketchpad_engine::plot_points_records::PlotPointsMode;
@@ -8,12 +9,12 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("plot_axis_value")).show(root.ctx(), |ui| {
-                ui.heading("Plot Value on Path");
+                ui.heading(tr("Plot Value on Path"));
                 ui.horizontal(|ui| {
-                    ui.label("Value");
+                    ui.label(tr("Value"));
                     ui.text_edit_singleline(&mut self.plot_axis_draft);
                 });
-                ui.label(match path {
+                ui.label(tr(match path {
                     Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Segment(_, _)) => {
                         format!("Segment object {id} (0 to 1)")
                     }
@@ -28,10 +29,10 @@ impl Editor {
                     }
                     Some(id) => format!("Axis object {id}"),
                     None => "Active X axis".into(),
-                });
+                }));
                 ui.horizontal(|ui| {
-                    apply = ui.button("Plot").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Plot")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -66,26 +67,26 @@ impl Editor {
             let mut apply = false;
             let mut done = false;
             egui::Modal::new(egui::Id::new("plot_points")).show(root.ctx(), |ui| {
-                ui.heading("Plot Points");
+                ui.heading(tr("Plot Points"));
                 ui.horizontal(|ui| {
-                    ui.label(if mode == PlotPointsMode::Cartesian {
+                    ui.label(tr(if mode == PlotPointsMode::Cartesian {
                         "X"
                     } else {
                         "Radius"
-                    });
+                    }));
                     ui.text_edit_singleline(&mut self.plot_points_first_draft);
                 });
                 ui.horizontal(|ui| {
-                    ui.label(if mode == PlotPointsMode::Cartesian {
+                    ui.label(tr(if mode == PlotPointsMode::Cartesian {
                         "Y"
                     } else {
                         "Angle (degrees)"
-                    });
+                    }));
                     ui.text_edit_singleline(&mut self.plot_points_second_draft);
                 });
                 ui.horizontal(|ui| {
-                    apply = ui.button("Plot").clicked();
-                    done = ui.button("Done").clicked();
+                    apply = ui.button(tr("Plot")).clicked();
+                    done = ui.button(tr("Done")).clicked();
                 });
             });
             if done {
@@ -115,24 +116,24 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("plot_table_data")).show(root.ctx(), |ui| {
-                ui.heading("Plot Table Data");
-                ui.label("First coordinate: t₂");
-                ui.label("Second coordinate: t₁");
+                ui.heading(tr("Plot Table Data"));
+                ui.label(tr("First coordinate: t₂"));
+                ui.label(tr("Second coordinate: t₁"));
                 ui.horizontal(|ui| {
                     ui.radio_value(
                         &mut self.plot_table_mode,
                         PlotPointsMode::Cartesian,
-                        "Cartesian (x, y)",
+                        tr("Cartesian (x, y)"),
                     );
                     ui.radio_value(
                         &mut self.plot_table_mode,
                         PlotPointsMode::Polar,
-                        "Polar (r, θ in degrees)",
+                        tr("Polar (r, θ in degrees)"),
                     );
                 });
                 ui.horizontal(|ui| {
-                    apply = ui.button("Plot").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Plot")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {

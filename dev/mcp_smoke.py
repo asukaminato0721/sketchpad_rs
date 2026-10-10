@@ -108,7 +108,7 @@ def check_window(client):
     tools = client.request("tools/list")["result"]["tools"]
     assert {tool["name"] for tool in tools} == {
         "get_state", "list_objects", "inspect_object", "select_objects",
-        "move_point", "set_parameter", "undo", "redo", "export_svg",
+        "move_point", "set_parameter", "undo", "redo", "export_svg", "create_point", "construct",
     }
     wait_for(lambda: client.tool("get_state")["viewport"]["rect"], "first canvas frame")
     window = xdotool("search", "--sync", "--onlyvisible", "--pid", client.process.pid).splitlines()[-1]
@@ -155,6 +155,21 @@ def check_window(client):
     assert client.tool("inspect_object", {"id": 1})["position"] == dragged
     client.tool("select_objects", {"ids": [2, 1]})
     assert client.tool("get_state")["selection_order"] == [2, 1]
+    # A construction and its helper objects share one undo step.
+    before = client.tool("get_state")
+    point = client.tool("create_point", {"x": 220, "y": 180, "label": "新点"})["created_ids"][0]
+    created = client.tool("construct", {"kind": "midpoint", "inputs": [1, point]})
+    assert len(created["created_ids"]) == 2
+    midpoint_id = created["selected_ids"][0]
+    assert client.tool("get_state")["undo_steps"] == before["undo_steps"] + 2
+    assert client.tool("inspect_object", {"id": midpoint_id})["position"]
+    client.tool("undo")
+    client.tool("undo")
+    assert client.tool("get_state")["object_count"] == before["object_count"]
+    assert client.tool("get_state")["selected"] == []
+    client.tool("redo")
+    client.tool("redo")
+    assert client.tool("inspect_object", {"id": midpoint_id})["position"]
     client.process.stdin.close()
     time.sleep(0.2)
     assert client.process.poll() is None, "Dirty editor must show its save confirmation"

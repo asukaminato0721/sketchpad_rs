@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, LinkButtonDraft};
 use sketchpad_engine::action_records::{
     AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions,
@@ -14,12 +15,12 @@ pub(super) fn animation_settings_ui(
     let free = matches!(doc.objects[target - 1].kind, Kind::Free(_));
     let parameter = matches!(doc.objects[target - 1].kind, Kind::Parameter(_));
     let circle = matches!(doc.objects[target - 1].kind, Kind::PointOnCircle(_, _, _));
-    ui.label(format!(
+    ui.label(tr(format!(
         "Animate {} {target}",
         if parameter { "parameter" } else { "point" }
-    ));
+    )));
     if free {
-        ui.label("Free points move at random");
+        ui.label(tr("Free points move at random"));
         settings.direction = AnimationDirection::Forward;
     } else {
         let direction_name = match (circle, parameter, settings.direction) {
@@ -32,8 +33,8 @@ pub(super) fn animation_settings_ui(
             (_, _, AnimationDirection::Bidirectional) => "Bidirectional",
             (_, _, AnimationDirection::Random) => "Random",
         };
-        egui::ComboBox::from_label("Direction")
-            .selected_text(direction_name)
+        egui::ComboBox::from_label(tr("Direction"))
+            .selected_text(tr(direction_name))
             .show_ui(ui, |ui| {
                 for (direction, name) in [
                     (
@@ -59,7 +60,7 @@ pub(super) fn animation_settings_ui(
                     (AnimationDirection::Bidirectional, "Bidirectional"),
                     (AnimationDirection::Random, "Random"),
                 ] {
-                    ui.selectable_value(&mut settings.direction, direction, name);
+                    ui.selectable_value(&mut settings.direction, direction, tr(name));
                 }
             });
     }
@@ -68,40 +69,43 @@ pub(super) fn animation_settings_ui(
     }
     ui.add_enabled(
         free || settings.direction != AnimationDirection::Bidirectional,
-        egui::Checkbox::new(&mut settings.once, "Once Only"),
+        egui::Checkbox::new(&mut settings.once, tr("Once Only")),
     );
     if parameter {
         ui.horizontal(|ui| {
-            ui.label("Change per second");
+            ui.label(tr("Change per second"));
             ui.add(egui::DragValue::new(&mut settings.speed).range(0.025..=2_500.));
         });
         if let Some(options) = settings.parameter.as_mut() {
-            ui.checkbox(&mut options.discrete, "Discrete changes");
+            ui.checkbox(&mut options.discrete, tr("Discrete changes"));
             ui.horizontal(|ui| {
-                ui.label("Step");
+                ui.label(tr("Step"));
                 ui.add_enabled(
                     options.discrete,
                     egui::DragValue::new(&mut options.step).range(0.001..=10_000.),
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("Domain");
+                ui.label(tr("Domain"));
                 ui.add(egui::DragValue::new(&mut options.min).speed(0.1));
-                ui.label("to");
+                ui.label(tr("to"));
                 ui.add(egui::DragValue::new(&mut options.max).speed(0.1));
             });
         }
     } else {
         ui.horizontal(|ui| {
-            ui.label("Speed");
+            ui.label(tr("Speed"));
             for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
-                if ui.selectable_label(settings.speed == speed, name).clicked() {
+                if ui
+                    .selectable_label(settings.speed == speed, tr(name))
+                    .clicked()
+                {
                     settings.speed = speed;
                 }
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Custom speed");
+            ui.label(tr("Custom speed"));
             ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
         });
     }
@@ -112,13 +116,13 @@ pub(super) fn movement_settings_ui(
     speed: &mut MovementSpeed,
     follow: &mut bool,
 ) {
-    egui::ComboBox::from_label("Speed")
-        .selected_text(match speed {
+    egui::ComboBox::from_label(tr("Speed"))
+        .selected_text(tr(match speed {
             MovementSpeed::Slow => "Slow",
             MovementSpeed::Medium => "Medium",
             MovementSpeed::Fast => "Fast",
             MovementSpeed::Instant => "Instant",
-        })
+        }))
         .show_ui(ui, |ui| {
             for (value, name) in [
                 (MovementSpeed::Slow, "Slow"),
@@ -126,11 +130,11 @@ pub(super) fn movement_settings_ui(
                 (MovementSpeed::Fast, "Fast"),
                 (MovementSpeed::Instant, "Instant"),
             ] {
-                ui.selectable_value(speed, value, name);
+                ui.selectable_value(speed, value, tr(name));
             }
         });
-    ui.radio_value(follow, true, "Follow moving destination");
-    ui.radio_value(follow, false, "Move toward initial destination");
+    ui.radio_value(follow, true, tr("Follow moving destination"));
+    ui.radio_value(follow, false, tr("Move toward initial destination"));
 }
 
 pub(super) fn scroll_settings_ui(
@@ -138,9 +142,9 @@ pub(super) fn scroll_settings_ui(
     target: usize,
     placement: &mut ScrollPlacement,
 ) {
-    ui.label(format!("Position point {target} in the sketch window:"));
-    ui.radio_value(placement, ScrollPlacement::UpperLeft, "Upper left");
-    ui.radio_value(placement, ScrollPlacement::Center, "Center");
+    ui.label(tr(format!("Position point {target} in the sketch window:")));
+    ui.radio_value(placement, ScrollPlacement::UpperLeft, tr("Upper left"));
+    ui.radio_value(placement, ScrollPlacement::Center, tr("Center"));
 }
 
 pub(super) fn presentation_settings_ui(
@@ -149,10 +153,10 @@ pub(super) fn presentation_settings_ui(
     mode: &mut PresentationMode,
     options: &mut PresentationOptions,
 ) {
-    ui.label(format!("Present {target_count} action button(s)"));
+    ui.label(tr(format!("Present {target_count} action button(s)")));
     let previous_mode = *mode;
-    ui.radio_value(mode, PresentationMode::Simultaneous, "Simultaneously");
-    ui.radio_value(mode, PresentationMode::Sequential, "Sequentially");
+    ui.radio_value(mode, PresentationMode::Simultaneous, tr("Simultaneously"));
+    ui.radio_value(mode, PresentationMode::Sequential, tr("Sequentially"));
     if *mode != previous_mode {
         let before = (
             options.deselect,
@@ -167,31 +171,31 @@ pub(super) fn presentation_settings_ui(
         options.native_state = before.3;
     }
     ui.separator();
-    ui.label("Before starting:");
-    ui.checkbox(&mut options.deselect, "Deselect objects");
-    ui.checkbox(&mut options.stop_animations, "Stop running animations");
-    ui.checkbox(&mut options.erase_traces, "Erase traces");
+    ui.label(tr("Before starting:"));
+    ui.checkbox(&mut options.deselect, tr("Deselect objects"));
+    ui.checkbox(&mut options.stop_animations, tr("Stop running animations"));
+    ui.checkbox(&mut options.erase_traces, tr("Erase traces"));
     ui.separator();
     if *mode == PresentationMode::Simultaneous {
-        ui.label("Stop after:");
+        ui.label(tr("Stop after:"));
         ui.radio_value(
             &mut options.stop,
             PresentationStop::LastAction,
-            "Last action stops",
+            tr("Last action stops"),
         );
         ui.radio_value(
             &mut options.stop,
             PresentationStop::FirstAction,
-            "First action stops",
+            tr("First action stops"),
         );
         ui.radio_value(
             &mut options.stop,
             PresentationStop::ElapsedTime,
-            "Elapsed time",
+            tr("Elapsed time"),
         );
     } else {
         options.stop = PresentationStop::LastAction;
-        ui.label("Pause between actions:");
+        ui.label(tr("Pause between actions:"));
     }
     if *mode == PresentationMode::Sequential || options.stop == PresentationStop::ElapsedTime {
         let mut seconds = f64::from(options.time_tenths) / 10.;
@@ -211,10 +215,10 @@ pub(super) fn presentation_settings_ui(
 
 pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut LinkButtonDraft) {
     if doc.page_count > 1 {
-        ui.radio_value(&mut draft.use_page, true, "Page");
+        ui.radio_value(&mut draft.use_page, true, tr("Page"));
         if draft.use_page {
             egui::ComboBox::from_id_salt("link_target_page")
-                .selected_text(format!("Page {}", draft.target_page + 1))
+                .selected_text(tr(format!("Page {}", draft.target_page + 1)))
                 .show_ui(ui, |ui| {
                     for page in 0..doc.page_count {
                         if page != doc.active_page
@@ -222,7 +226,7 @@ pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut Li
                                 .selectable_value(
                                     &mut draft.target_page,
                                     page,
-                                    format!("Page {}", page + 1),
+                                    tr(format!("Page {}", page + 1)),
                                 )
                                 .clicked()
                         {
@@ -237,15 +241,15 @@ pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut Li
                     .any(|id| matches!(doc.objects[id - 1].kind, Kind::HideShowButton { .. }))
             {
                 egui::ComboBox::from_id_salt("link_target_button")
-                    .selected_text(match draft.target_button_ordinal {
+                    .selected_text(tr(match draft.target_button_ordinal {
                         Some(ordinal) => format!("Button {ordinal} on page"),
                         None => "No button on page".into(),
-                    })
+                    }))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut draft.target_button_ordinal,
                             None,
-                            "No button on page",
+                            tr("No button on page"),
                         );
                         for (index, id) in destination_buttons.iter().enumerate() {
                             let label = match &doc.objects[id - 1].kind {
@@ -255,18 +259,18 @@ pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut Li
                             ui.selectable_value(
                                 &mut draft.target_button_ordinal,
                                 Some(index + 1),
-                                label,
+                                tr(label),
                             );
                         }
                     });
             }
         }
-        ui.radio_value(&mut draft.use_page, false, "URL");
+        ui.radio_value(&mut draft.use_page, false, tr("URL"));
     } else {
         draft.use_page = false;
     }
     if !draft.use_page {
-        ui.label("URL");
+        ui.label(tr("URL"));
         ui.text_edit_singleline(&mut draft.url);
     }
 }
@@ -277,11 +281,15 @@ impl Editor {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("animation_button_settings")).show(root.ctx(), |ui| {
-                ui.heading("Animation Button");
+                ui.heading(tr("Animation Button"));
                 if draft.targets.len() > 1 {
-                    ui.label("Choose a target to set its motion:");
+                    ui.label(tr("Choose a target to set its motion:"));
                     for (index, target) in draft.targets.iter().enumerate() {
-                        ui.selectable_value(&mut draft.selected, index, format!("Object {target}"));
+                        ui.selectable_value(
+                            &mut draft.selected,
+                            index,
+                            tr(format!("Object {target}")),
+                        );
                     }
                     ui.separator();
                 }
@@ -289,8 +297,8 @@ impl Editor {
                 let settings = &mut draft.settings[draft.selected];
                 animation_settings_ui(&self.doc, ui, target, settings);
                 ui.horizontal(|ui| {
-                    create = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    create = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -325,14 +333,16 @@ impl Editor {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("movement_button_settings")).show(root.ctx(), |ui| {
-                ui.heading("Movement Button");
+                ui.heading(tr("Movement Button"));
                 for &(source, destination) in &draft.pairs {
-                    ui.label(format!("Move object {source} toward object {destination}"));
+                    ui.label(tr(format!(
+                        "Move object {source} toward object {destination}"
+                    )));
                 }
                 movement_settings_ui(ui, &mut draft.speed, &mut draft.follow);
                 ui.horizontal(|ui| {
-                    create = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    create = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -357,11 +367,11 @@ impl Editor {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("scroll_button_settings")).show(root.ctx(), |ui| {
-                ui.heading("Scroll Button");
+                ui.heading(tr("Scroll Button"));
                 scroll_settings_ui(ui, draft.target, &mut draft.placement);
                 ui.horizontal(|ui| {
-                    create = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    create = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -384,7 +394,7 @@ impl Editor {
             egui::Modal::new(egui::Id::new("presentation_button_settings")).show(
                 root.ctx(),
                 |ui| {
-                    ui.heading("Presentation Button");
+                    ui.heading(tr("Presentation Button"));
                     presentation_settings_ui(
                         ui,
                         draft.targets.len(),
@@ -392,8 +402,8 @@ impl Editor {
                         &mut draft.options,
                     );
                     ui.horizontal(|ui| {
-                        create = ui.button("Create").clicked();
-                        cancel = ui.button("Cancel").clicked();
+                        create = ui.button(tr("Create")).clicked();
+                        cancel = ui.button(tr("Cancel")).clicked();
                     });
                 },
             );
@@ -419,11 +429,11 @@ impl Editor {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("link_button_settings")).show(root.ctx(), |ui| {
-                ui.heading("Link Button");
+                ui.heading(tr("Link Button"));
                 link_settings_ui(&self.doc, ui, &mut draft);
                 ui.horizontal(|ui| {
-                    create = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    create = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {

@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, MarkedAngle, TranslationMode};
 
 impl Editor {
@@ -6,11 +7,11 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("text_font_family")).show(root.ctx(), |ui| {
-                ui.heading("Font family");
+                ui.heading(tr("Font family"));
                 ui.text_edit_singleline(&mut self.text_font_input);
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Apply")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if apply {
@@ -35,98 +36,102 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("polar_translation")).show(root.ctx(), |ui| {
-                ui.heading("Translate point");
+                ui.heading(tr("Translate point"));
                 ui.radio_value(
                     &mut mode,
                     TranslationMode::FixedPolar,
-                    "Polar: fixed distance",
+                    tr("Polar: fixed distance"),
                 );
                 ui.radio_value(
                     &mut mode,
                     TranslationMode::FixedRectangular,
-                    "Rectangular: fixed distances",
+                    tr("Rectangular: fixed distances"),
                 );
                 ui.add_enabled_ui(self.marked_distance.is_some(), |ui| {
                     ui.radio_value(
                         &mut mode,
                         TranslationMode::MarkedDistance,
-                        "Polar: marked distance",
+                        tr("Polar: marked distance"),
                     );
                 });
                 ui.add_enabled_ui(self.marked_rectangular_distances.is_some(), |ui| {
                     ui.radio_value(
                         &mut mode,
                         TranslationMode::RectangularMarked,
-                        "Rectangular: marked distances",
+                        tr("Rectangular: marked distances"),
                     );
                     ui.radio_value(
                         &mut mode,
                         TranslationMode::RectangularHorizontalFixed,
-                        "Rectangular: fixed horizontal, marked vertical",
+                        tr("Rectangular: fixed horizontal, marked vertical"),
                     );
                     ui.radio_value(
                         &mut mode,
                         TranslationMode::RectangularVerticalFixed,
-                        "Rectangular: marked horizontal, fixed vertical",
+                        tr("Rectangular: marked horizontal, fixed vertical"),
                     );
                 });
                 ui.add_enabled_ui(self.marked_vector.is_some(), |ui| {
-                    ui.radio_value(&mut mode, TranslationMode::MarkedVector, "Marked vector");
+                    ui.radio_value(
+                        &mut mode,
+                        TranslationMode::MarkedVector,
+                        tr("Marked vector"),
+                    );
                 });
                 if mode == TranslationMode::MarkedVector {
                     if let Some((start, end)) = self.marked_vector {
-                        ui.label(format!("Point {start} → point {end}"));
+                        ui.label(tr(format!("Point {start} → point {end}")));
                     }
                 } else if mode == TranslationMode::RectangularMarked {
                     if let Some((horizontal, vertical)) = self.marked_rectangular_distances {
-                        ui.label(format!(
+                        ui.label(tr(format!(
                             "Horizontal distance {horizontal}; vertical distance {vertical}"
-                        ));
+                        )));
                     }
                 } else if mode == TranslationMode::RectangularHorizontalFixed {
                     if let Some((_, vertical_id)) = self.marked_rectangular_distances {
-                        ui.label(format!("Vertical distance value {vertical_id}"));
+                        ui.label(tr(format!("Vertical distance value {vertical_id}")));
                     }
                     ui.horizontal(|ui| {
-                        ui.label("Horizontal (cm)");
+                        ui.label(tr("Horizontal (cm)"));
                         ui.add(egui::DragValue::new(&mut horizontal).speed(0.1));
                     });
                 } else if mode == TranslationMode::RectangularVerticalFixed {
                     if let Some((horizontal_id, _)) = self.marked_rectangular_distances {
-                        ui.label(format!("Horizontal distance value {horizontal_id}"));
+                        ui.label(tr(format!("Horizontal distance value {horizontal_id}")));
                     }
                     ui.horizontal(|ui| {
-                        ui.label("Vertical (cm)");
+                        ui.label(tr("Vertical (cm)"));
                         ui.add(egui::DragValue::new(&mut vertical).speed(0.1));
                     });
                 } else if mode == TranslationMode::FixedRectangular {
                     ui.horizontal(|ui| {
-                        ui.label("Horizontal (cm)");
+                        ui.label(tr("Horizontal (cm)"));
                         ui.add(egui::DragValue::new(&mut horizontal).speed(0.1));
                     });
                     ui.horizontal(|ui| {
-                        ui.label("Vertical (cm)");
+                        ui.label(tr("Vertical (cm)"));
                         ui.add(egui::DragValue::new(&mut vertical).speed(0.1));
                     });
                 } else {
                     ui.horizontal(|ui| {
-                        ui.label("Angle (degrees)");
+                        ui.label(tr("Angle (degrees)"));
                         ui.add(egui::DragValue::new(&mut angle).speed(1.));
                     });
                     if mode == TranslationMode::MarkedDistance {
                         if let Some(id) = self.marked_distance {
-                            ui.label(format!("Distance value {id}"));
+                            ui.label(tr(format!("Distance value {id}")));
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            ui.label("Distance (cm)");
+                            ui.label(tr("Distance (cm)"));
                             ui.add(egui::DragValue::new(&mut distance).speed(0.1));
                         });
                     }
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Translate").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Translate")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             self.translation_angle = angle;
@@ -147,30 +152,30 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("dilation_ratio")).show(root.ctx(), |ui| {
-                ui.heading("Dilate object");
-                ui.radio_value(&mut use_marked, false, "Fixed ratio");
+                ui.heading(tr("Dilate object"));
+                ui.radio_value(&mut use_marked, false, tr("Fixed ratio"));
                 ui.add_enabled_ui(
                     self.marked_ratio.is_some() || self.marked_ratio_value.is_some(),
                     |ui| {
-                        ui.radio_value(&mut use_marked, true, "Marked ratio");
+                        ui.radio_value(&mut use_marked, true, tr("Marked ratio"));
                     },
                 );
                 if use_marked {
                     if let Some(id) = self.marked_ratio_value {
-                        ui.label(format!("Value {id}"));
+                        ui.label(tr(format!("Value {id}")));
                     }
                     if let Some([origin, base, target]) = self.marked_ratio {
-                        ui.label(format!("Point {origin} → {base} → {target}"));
+                        ui.label(tr(format!("Point {origin} → {base} → {target}")));
                     }
                 } else {
                     ui.horizontal(|ui| {
-                        ui.label("Ratio");
+                        ui.label(tr("Ratio"));
                         ui.add(egui::DragValue::new(&mut factor).speed(0.05));
                     });
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Dilate").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Dilate")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             self.dilation_factor = factor;
@@ -188,27 +193,27 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_rotation")).show(root.ctx(), |ui| {
-                ui.heading("Rotate");
-                ui.radio_value(&mut use_marked, false, "Fixed angle");
+                ui.heading(tr("Rotate"));
+                ui.radio_value(&mut use_marked, false, tr("Fixed angle"));
                 ui.add_enabled_ui(self.marked_angle.is_some(), |ui| {
-                    ui.radio_value(&mut use_marked, true, "Marked angle");
+                    ui.radio_value(&mut use_marked, true, tr("Marked angle"));
                 });
                 if use_marked {
                     if let Some(MarkedAngle::Points([first, vertex, last])) = self.marked_angle {
-                        ui.label(format!("Point {first} → {vertex} → {last}"));
+                        ui.label(tr(format!("Point {first} → {vertex} → {last}")));
                     }
                     if let Some(MarkedAngle::Value(id)) = self.marked_angle {
-                        ui.label(format!("Calculated angle {id}"));
+                        ui.label(tr(format!("Calculated angle {id}")));
                     }
                 } else {
                     ui.horizontal(|ui| {
-                        ui.label("Angle (degrees)");
+                        ui.label(tr("Angle (degrees)"));
                         ui.add(egui::DragValue::new(&mut angle).speed(1.));
                     });
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Rotate").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Rotate")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             self.rotation_angle = angle;

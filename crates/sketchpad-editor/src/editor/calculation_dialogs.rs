@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, ParameterAnimationSettings};
 use sketchpad_engine::document::Kind;
 
@@ -60,13 +61,13 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("calculation_expression")).show(root.ctx(), |ui| {
-                ui.heading(if edit_id.is_some() {
+                ui.heading(tr(if edit_id.is_some() {
                     "Edit calculation"
                 } else {
                     "Calculate"
-                });
+                }));
                 ui.text_edit_singleline(&mut self.calculation_draft);
-                ui.label(
+                ui.label(tr(
                     if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
                         "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order"
                     } else if self.doc.selected.len() >= 2 {
@@ -84,16 +85,16 @@ impl Editor {
                         "Use a parameter by name, or a selected numeric value as v; degree literals use °"
                     } else {
                         "Enter numbers, arithmetic, functions, pi/π, e, and cm, degree, or radian literals"
-                    },
+                    }),
                 );
                 if self.doc.selected.iter().all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {
-                    ui.label("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e");
+                    ui.label(tr("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e"));
                 }
                 ui.horizontal(|ui| {
                     apply = ui
-                        .button(if edit_id.is_some() { "Update" } else { "Create" })
+                        .button(tr(if edit_id.is_some() { "Update" } else { "Create" }))
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -237,17 +238,17 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
-                ui.heading("Iterate");
-                ui.label("Select a free seed point and its translated, rotated, dilated, or reflected image. Add a scalar parameter or calculation for live point depth, or their segment or circle with an optional depth value. Rays also accept a scalar parameter or calculation for live depth.");
-                ui.label("For other carried shapes, select a seed point, its transformed image, and the circles, polygons, arcs, rays or lines to repeat. Derived seed points are supported. An optional scalar depth value updates the number of images live.");
-                ui.label("For numeric mappings, also select the parameter, calculation, and attached label, with an optional separate depth value. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter.");
+                ui.heading(tr("Iterate"));
+                ui.label(tr("Select a free seed point and its translated, rotated, dilated, or reflected image. Add a scalar parameter or calculation for live point depth, or their segment or circle with an optional depth value. Rays also accept a scalar parameter or calculation for live depth."));
+                ui.label(tr("For other carried shapes, select a seed point, its transformed image, and the circles, polygons, arcs, rays or lines to repeat. Derived seed points are supported. An optional scalar depth value updates the number of images live."));
+                ui.label(tr("For numeric mappings, also select the parameter, calculation, and attached label, with an optional separate depth value. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter."));
                 ui.horizontal(|ui| {
-                    ui.label("Depth");
+                    ui.label(tr("Depth"));
                     ui.text_edit_singleline(&mut self.iteration_depth_draft);
                 });
                 ui.horizontal(|ui| {
-                    apply = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -269,19 +270,19 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("named_parameter")).show(root.ctx(), |ui| {
-                ui.heading("New named parameter");
+                ui.heading(tr("New named parameter"));
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(tr("Name"));
                     ui.text_edit_singleline(&mut self.parameter_name_draft);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Value");
+                    ui.label(tr("Value"));
                     ui.text_edit_singleline(&mut self.parameter_value_draft);
                 });
-                ui.label("Finite values, up to 32 native numeric tokens");
+                ui.label(tr("Finite values, up to 32 native numeric tokens"));
                 ui.horizontal(|ui| {
-                    apply = ui.button("Create").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Create")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {
@@ -324,25 +325,25 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("parameter_value")).show(root.ctx(), |ui| {
-                ui.heading(format!("Edit parameter {id}"));
+                ui.heading(tr(format!("Edit parameter {id}")));
                 ui.horizontal(|ui| {
-                    ui.label("Value");
+                    ui.label(tr("Value"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_value_draft)
                             .desired_width(90.),
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Precision");
+                    ui.label(tr("Precision"));
                     egui::ComboBox::from_id_salt("parameter_precision")
-                        .selected_text(match self.parameter_precision_draft {
+                        .selected_text(tr(match self.parameter_precision_draft {
                             0 => "units",
                             1 => "tenths",
                             2 => "hundredths",
                             3 => "thousandths",
                             4 => "ten-thousandths",
                             _ => "hundred-thousandths",
-                        })
+                        }))
                         .show_ui(ui, |ui| {
                             for (precision, name) in [
                                 (0, "units"),
@@ -361,78 +362,82 @@ impl Editor {
                         });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Display");
+                    ui.label(tr("Display"));
                     egui::ComboBox::from_id_salt("parameter_display_mode")
-                        .selected_text(match self.parameter_display_mode_draft {
+                        .selected_text(tr(match self.parameter_display_mode_draft {
                             0 => "Original definition",
                             1 => "Value only",
                             _ => "Current name",
-                        })
+                        }))
                         .show_ui(ui, |ui| {
                             if self.parameter_original_display_mode {
                                 ui.selectable_value(
                                     &mut self.parameter_display_mode_draft,
                                     0,
-                                    "Original definition",
+                                    tr("Original definition"),
                                 );
                             }
                             ui.selectable_value(
                                 &mut self.parameter_display_mode_draft,
                                 1,
-                                "Value only",
+                                tr("Value only"),
                             );
                             ui.selectable_value(
                                 &mut self.parameter_display_mode_draft,
                                 3,
-                                "Current name",
+                                tr("Current name"),
                             );
                         });
                 });
                 ui.checkbox(
                     &mut self.parameter_edit_box_draft,
-                    "Show edit box (double-click to edit)",
+                    tr("Show edit box (double-click to edit)"),
                 );
                 ui.horizontal(|ui| {
-                    ui.label("Change");
-                    ui.radio_value(&mut self.parameter_discrete_draft, false, "Continuously");
-                    ui.radio_value(&mut self.parameter_discrete_draft, true, "Discretely");
+                    ui.label(tr("Change"));
+                    ui.radio_value(
+                        &mut self.parameter_discrete_draft,
+                        false,
+                        tr("Continuously"),
+                    );
+                    ui.radio_value(&mut self.parameter_discrete_draft, true, tr("Discretely"));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("By");
+                    ui.label(tr("By"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_rate_units_draft)
                             .desired_width(70.),
                     );
-                    ui.label("units per");
+                    ui.label(tr("units per"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_rate_seconds_draft)
                             .desired_width(70.),
                     );
-                    ui.label("seconds");
+                    ui.label(tr("seconds"));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Animation domain");
+                    ui.label(tr("Animation domain"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_min_draft)
                             .desired_width(70.),
                     );
-                    ui.label("to");
+                    ui.label(tr("to"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_max_draft)
                             .desired_width(70.),
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Keyboard (+/−) adjustment");
+                    ui.label(tr("Keyboard (+/−) adjustment"));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.parameter_keyboard_step_draft)
                             .desired_width(70.),
                     );
                 });
-                ui.label("The domain affects animation only");
+                ui.label(tr("The domain affects animation only"));
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    apply = ui.button(tr("Apply")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if cancel {

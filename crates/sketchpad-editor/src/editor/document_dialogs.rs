@@ -1,4 +1,5 @@
 use super::Editor;
+use super::i18n::tr;
 use sketchpad_engine::document::Kind;
 
 impl Editor {
@@ -13,41 +14,44 @@ impl Editor {
             let mut close = false;
             let mut selected_page = self.document_options_page;
             egui::Modal::new(egui::Id::new("document_options")).show(root.ctx(), |ui| {
-                ui.heading("Document Options");
-                egui::ComboBox::from_label("Page")
-                    .selected_text(format!("Page {}", selected_page + 1))
+                ui.heading(tr("Document Options"));
+                egui::ComboBox::from_label(tr("Page"))
+                    .selected_text(tr(format!("Page {}", selected_page + 1)))
                     .show_ui(ui, |ui| {
                         for page in 0..self.doc.page_count {
                             let label = self.doc.page_names[page].as_ref().map_or_else(
                                 || format!("Page {}", page + 1),
                                 |name| format!("Page {}: {name}", page + 1),
                             );
-                            ui.selectable_value(&mut selected_page, page, label);
+                            ui.selectable_value(&mut selected_page, page, tr(label));
                         }
                     });
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(tr("Name"));
                     ui.text_edit_singleline(&mut self.page_name_draft);
                 });
-                ui.label("Leave the name empty to use the page number.");
-                rename_page = ui.button("Rename Page").clicked();
-                add_page = ui.button("Add Blank Page").clicked();
-                copy_page = ui.button("Copy Selected Page").clicked();
+                ui.label(tr("Leave the name empty to use the page number."));
+                rename_page = ui.button(tr("Rename Page")).clicked();
+                add_page = ui.button(tr("Add Blank Page")).clicked();
+                copy_page = ui.button(tr("Copy Selected Page")).clicked();
                 remove_page = ui
-                    .add_enabled(self.doc.page_count > 1, egui::Button::new("Remove Page…"))
+                    .add_enabled(
+                        self.doc.page_count > 1,
+                        egui::Button::new(tr("Remove Page…")),
+                    )
                     .clicked();
                 ui.horizontal(|ui| {
                     move_up = ui
-                        .add_enabled(selected_page > 0, egui::Button::new("Move Up"))
+                        .add_enabled(selected_page > 0, egui::Button::new(tr("Move Up")))
                         .clicked();
                     move_down = ui
                         .add_enabled(
                             selected_page + 1 < self.doc.page_count,
-                            egui::Button::new("Move Down"),
+                            egui::Button::new(tr("Move Down")),
                         )
                         .clicked();
                 });
-                close = ui.button("Close").clicked();
+                close = ui.button(tr("Close")).clicked();
             });
             if selected_page != self.document_options_page {
                 self.document_options_page = selected_page;
@@ -128,16 +132,18 @@ impl Editor {
                 })
                 .count();
             egui::Modal::new(egui::Id::new("remove_page_confirmation")).show(root.ctx(), |ui| {
-                ui.heading(format!("Remove page {}?", page + 1));
-                ui.label("The page and its objects will be removed from this sketch.");
+                ui.heading(tr(format!("Remove page {}?", page + 1)));
+                ui.label(tr(
+                    "The page and its objects will be removed from this sketch.",
+                ));
                 if affected_links > 0 {
-                    ui.label(format!(
+                    ui.label(tr(format!(
                         "{affected_links} Page Link(s) to this page will lose their destination."
-                    ));
+                    )));
                 }
                 ui.horizontal(|ui| {
-                    confirm = ui.button("Remove Page").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    confirm = ui.button(tr("Remove Page")).clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if confirm {
@@ -168,16 +174,16 @@ impl Editor {
             }
             let mut decision = None;
             egui::Modal::new(egui::Id::new("unsaved_changes")).show(root.ctx(), |ui| {
-                ui.heading("Unsaved changes");
-                ui.label("Save this sketch before continuing?");
+                ui.heading(tr("Unsaved changes"));
+                ui.label(tr("Save this sketch before continuing?"));
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(tr("Save")).clicked() {
                         decision = Some(Decision::Save);
                     }
-                    if ui.button("Discard").clicked() {
+                    if ui.button(tr("Discard")).clicked() {
                         decision = Some(Decision::Discard);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         decision = Some(Decision::Cancel);
                     }
                 });

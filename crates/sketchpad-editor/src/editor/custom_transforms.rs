@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{CustomTransform, Editor};
 use sketchpad_engine::document::Document;
 
@@ -81,20 +82,20 @@ impl Editor {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("define_custom_transform")).show(root.ctx(), |ui| {
-                ui.heading("Define Custom Transform");
-                ui.label(format!("Point {seed} maps to point {output}"));
+                ui.heading(tr("Define Custom Transform"));
+                ui.label(tr(format!("Point {seed} maps to point {output}")));
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(tr("Name"));
                     ui.text_edit_singleline(&mut self.custom_transform_name_draft);
                 });
                 ui.horizontal(|ui| {
                     create = ui
                         .add_enabled(
                             !self.custom_transform_name_draft.trim().is_empty(),
-                            egui::Button::new("Define"),
+                            egui::Button::new(tr("Define")),
                         )
                         .clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(tr("Cancel")).clicked();
                 });
             });
             if create {
@@ -128,9 +129,9 @@ impl Editor {
                 .min(count.saturating_sub(1));
             let selected = self.custom_transform_edit_selected;
             egui::Modal::new(egui::Id::new("edit_custom_transforms")).show(root.ctx(), |ui| {
-                ui.heading("Edit Custom Transforms");
+                ui.heading(tr("Edit Custom Transforms"));
                 if count == 0 {
-                    ui.label("No custom transforms are defined.");
+                    ui.label(tr("No custom transforms are defined."));
                 } else {
                     for (index, definition) in self.custom_transforms.iter().enumerate() {
                         let valid = self
@@ -149,25 +150,25 @@ impl Editor {
                     let selected = self.custom_transform_edit_selected;
                     let definition = &self.custom_transforms[selected];
                     ui.separator();
-                    ui.label(format!(
+                    ui.label(tr(format!(
                         "Point {} maps to point {}",
                         definition.seed, definition.output
-                    ));
+                    )));
                     let mut name = definition.name.clone();
                     if ui.text_edit_singleline(&mut name).changed() && !name.trim().is_empty() {
                         rename = Some(name);
                     }
                     ui.horizontal(|ui| {
                         move_up = ui
-                            .add_enabled(selected > 0, egui::Button::new("Move Up"))
+                            .add_enabled(selected > 0, egui::Button::new(tr("Move Up")))
                             .clicked();
                         move_down = ui
-                            .add_enabled(selected + 1 < count, egui::Button::new("Move Down"))
+                            .add_enabled(selected + 1 < count, egui::Button::new(tr("Move Down")))
                             .clicked();
-                        remove = ui.button("Remove").clicked();
+                        remove = ui.button(tr("Remove")).clicked();
                     });
                 }
-                close = ui.button("Close").clicked();
+                close = ui.button(tr("Close")).clicked();
             });
             let selected = self.custom_transform_edit_selected;
             if let Some(name) = rename {

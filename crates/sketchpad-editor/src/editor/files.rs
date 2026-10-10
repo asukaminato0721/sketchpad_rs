@@ -1,3 +1,4 @@
+use super::i18n::tr;
 use super::{Editor, OutputAction, PageSetup, PaperSize, PendingAction};
 use crate::render::{Viewport, svg_page_on_paper, svg_page_with_button_offset};
 use sketchpad_engine::document::Document;
@@ -163,39 +164,44 @@ impl Editor {
             let before = self.page_setup;
             let mut close = false;
             egui::Modal::new(egui::Id::new("page_setup")).show(root.ctx(), |ui| {
-                ui.heading("Page Setup");
-                egui::ComboBox::from_label("Paper")
+                ui.heading(tr("Page Setup"));
+                egui::ComboBox::from_label(tr("Paper"))
                     .selected_text(self.page_setup.paper_name())
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.page_setup.paper_size,
                             PaperSize::A4,
-                            "A4 (210 × 297 mm)",
+                            tr("A4 (210 × 297 mm)"),
                         );
                         ui.selectable_value(
                             &mut self.page_setup.paper_size,
                             PaperSize::Letter,
-                            "Letter (8.5 × 11 in)",
+                            tr("Letter (8.5 × 11 in)"),
                         );
                     });
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.page_setup.landscape, false, "Portrait");
-                    ui.selectable_value(&mut self.page_setup.landscape, true, "Landscape");
+                    ui.selectable_value(&mut self.page_setup.landscape, false, tr("Portrait"));
+                    ui.selectable_value(&mut self.page_setup.landscape, true, tr("Landscape"));
                 });
                 ui.add(
                     egui::Slider::new(&mut self.page_setup.margin_mm, 0.0..=40.0)
                         .suffix(" mm")
-                        .text("Margins"),
+                        .text(tr("Margins")),
                 );
-                ui.checkbox(&mut self.page_setup.fit_to_page, "Fit current view to page");
+                ui.checkbox(
+                    &mut self.page_setup.fit_to_page,
+                    tr("Fit current view to page"),
+                );
                 ui.add_enabled(
                     !self.page_setup.fit_to_page,
                     egui::Slider::new(&mut self.page_setup.scale_percent, 25..=400)
                         .suffix("%")
-                        .text("Scale"),
+                        .text(tr("Scale")),
                 );
-                ui.label("Page setup affects PDF export, Print Preview, and Print.");
-                close = ui.button("Done").clicked();
+                ui.label(tr(
+                    "Page setup affects PDF export, Print Preview, and Print.",
+                ));
+                close = ui.button(tr("Done")).clicked();
             });
             if self.page_setup != before {
                 self.print_preview_texture = None;
@@ -213,12 +219,13 @@ impl Editor {
             let mut open = true;
             let mut refresh = false;
             let mut print = false;
-            egui::Window::new("Print Preview")
+            egui::Window::new(tr("Print Preview"))
+                .id(egui::Id::new("Print Preview"))
                 .open(&mut open)
                 .default_size(egui::vec2(620., 720.))
                 .show(root.ctx(), |ui| {
                     let (width, height) = self.page_setup.dimensions_mm();
-                    ui.label(format!(
+                    ui.label(tr(format!(
                         "{} · {} · {:.1} × {:.1} mm · {:.1} mm margins",
                         self.page_setup.paper_name(),
                         if self.page_setup.landscape {
@@ -229,10 +236,10 @@ impl Editor {
                         width,
                         height,
                         self.page_setup.margin_mm
-                    ));
+                    )));
                     ui.horizontal(|ui| {
-                        refresh = ui.button("Refresh").clicked();
-                        print = ui.button("Print…").clicked();
+                        refresh = ui.button(tr("Refresh")).clicked();
+                        print = ui.button(tr("Print…")).clicked();
                     });
                     ui.separator();
                     if let Some(texture) = &self.print_preview_texture {
@@ -249,9 +256,9 @@ impl Editor {
                     } else if let Some(error) = &self.print_preview_error {
                         ui.colored_label(
                             egui::Color32::DARK_RED,
-                            format!("Preview unavailable: {error}"),
+                            tr(format!("Preview unavailable: {error}")),
                         );
-                        ui.label("Install rsvg-convert to enable PDF output and preview.");
+                        ui.label(tr("Install rsvg-convert to enable PDF output and preview."));
                     }
                 });
             if refresh {

@@ -3,6 +3,7 @@ use crate::render::Viewport;
 
 impl Editor {
     pub(super) fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
+        self.language.activate();
         if self.pending_action.is_none() {
             if root.input_mut(|input| {
                 input.consume_key(
@@ -68,8 +69,11 @@ impl Editor {
         self.menu_ui(root);
         self.motion_controller_ui(root);
         self.text_palette_ui(root);
-        self.tools_ui(root);
+        self.tool_strip_ui(root);
         self.status_ui(root);
+        self.page_tabs_ui(root);
+        self.tools_ui(root);
+        self.about_ui(root);
         let rect = self.canvas_ui(root);
         self.document_dialogs_ui(root);
         self.preferences_dialog_ui(root);
