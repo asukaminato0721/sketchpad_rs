@@ -2333,6 +2333,7 @@ impl Mesh {
         vp: &Viewport,
         samples: &[crate::document::LocusStroke],
         selection_color: Option<[f32; 4]>,
+        alpha: f32,
     ) {
         for sample in samples {
             let VisualStyle::Stroke { line, color } = sample.style else {
@@ -2348,7 +2349,7 @@ impl Mesh {
                     &[a, b],
                     false,
                     line,
-                    selection_color.unwrap_or_else(|| rgba(color, 1.)),
+                    selection_color.unwrap_or_else(|| rgba(color, alpha)),
                 );
             }
         }
@@ -2517,6 +2518,7 @@ pub enum TraceMark {
     Circle(Point, f64, RgbColor),
     Arc(Vec<Point>, RgbColor),
     Polygon(Vec<Point>, RgbColor),
+    Strokes(Vec<crate::document::LocusStroke>),
 }
 
 #[derive(Clone)]
@@ -2691,6 +2693,9 @@ impl GeometryRenderer {
             match &sample.mark {
                 TraceMark::Point(point, color) => {
                     mesh.disk(vp.screen(*point), 2., rgba(*color, alpha));
+                }
+                TraceMark::Strokes(strokes) => {
+                    mesh.locus_strokes(vp, strokes, None, alpha);
                 }
                 TraceMark::Straight(a, b, mode, color) => {
                     if let Some((a, b)) = clipped_line(vp.screen(*a), vp.screen(*b), *mode, vp.rect)
@@ -2909,7 +2914,7 @@ impl GeometryRenderer {
                 .or_else(|| doc.mapped_collection_strokes(o.id, 384))
                 .or_else(|| doc.sampled_mapped_styled_strokes(o.id, 384))
             {
-                mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected));
+                mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected), 1.);
             } else if let Some(surfaces) = doc
                 .mapped_collection_surfaces(o.id, 384)
                 .or_else(|| doc.locus_surfaces(o.id, 384))

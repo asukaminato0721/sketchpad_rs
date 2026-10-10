@@ -1,7 +1,7 @@
 use super::{AnimationButtonDraft, AnimationTrack, Editor};
 use crate::render::{TraceMark, TraceSample};
 use sketchpad_engine::action_records::{AnimationDirection, AnimationSettings, MovementSpeed};
-use sketchpad_engine::document::{Kind, LineMode, Point};
+use sketchpad_engine::document::{Kind, LineMode, LocusStroke, Point};
 use sketchpad_engine::style_records::{RgbColor, VisualStyle};
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -41,6 +41,31 @@ impl Editor {
             } else if let Some(points) = self.doc.polygon_points(object.id) {
                 self.trace_marks
                     .push(TraceSample::new(TraceMark::Polygon(points, color)));
+            } else if matches!(object.kind, Kind::SampledMapped(_)) {
+                let strokes = self
+                    .doc
+                    .sampled_mapped_styled_strokes(object.id, 384)
+                    .or_else(|| {
+                        let style = self.doc.effective_visual_style(object.id)?;
+                        Some(
+                            self.doc
+                                .sampled_mapped_strokes(object.id, 384)?
+                                .into_iter()
+                                .map(|(start, end, mode)| LocusStroke {
+                                    start,
+                                    end,
+                                    mode,
+                                    style,
+                                })
+                                .collect(),
+                        )
+                    });
+                if let Some(strokes) = strokes.filter(|strokes| !strokes.is_empty()) {
+                    // Count the whole curve as one sample. Counting each segment
+                    // would exhaust the history after only a few animation frames.
+                    self.trace_marks
+                        .push(TraceSample::new(TraceMark::Strokes(strokes)));
+                }
             }
         }
         if self.trace_marks.len() > 8192 {

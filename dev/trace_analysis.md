@@ -13,4 +13,24 @@ The desktop drag capture `/tmp/sketchpad_trace_shapes_native_during_drag_fixed.p
 
 `tests/replay_trace_straight_base.txt` generates traced rays and lines. Native Trace Objects set the same header bit for each, and the native line drag capture `/tmp/sketchpad_trace_line_drag_probe_during_drag.png` shows viewport-length historical strokes. Both port-generated files opened and saved byte-identically in Sketchpad 5 (1,968 bytes each). The port stores the ray or line mode with each sampled pair of endpoints and clips the historical stroke to the viewport at draw time. `/tmp/sketchpad_trace_line_port_during_drag_fixed.png` confirms the port's desktop trail across the full visible line.
 
-Motion through action buttons still needs trace behavior checks and drawing support.
+Sampled custom-transformation curves now retain traces during animation and dragging.
+The `弦图【扫描版】.gsp` sample enables tracing on object 56, a sampled colorized curve.
+Its Scan button moves hidden point 41. Previously, trace capture omitted sampled curves,
+so the scan moved without retaining any history.
+
+Trace capture now uses the same 384-subdivision budget as the live curve renderer.
+Each snapshot retains separate strokes, their colors, and their line styles.
+The sampler omits undefined spans. Each complete curve counts as one history sample,
+so the 8,192-sample limit does not discard old scan rows after a few frames.
+Rendering uses the stored styles and applies the existing trace fade setting.
+Trace Objects and Stop Tracing also accept sampled curves.
+
+`tests/fixtures/chord_scan_original.gsp` is an unchanged copy of the reported sample.
+Editor tests activate its Scan button and check 24 retained snapshots, fixed historical
+colors and positions, stopping, clearing, visibility, and the active-page filter.
+A separate test covers curves without color mapping. The engine trace test checks
+byte-exact import, Stop Tracing, undo/redo, and save/reopen for the reported sample.
+An Xvfb desktop check confirms that the Scan button leaves a colored band after
+stopping and that Display > Erase Traces removes that band.
+The captures are `/tmp/chord-scan-before.png`, `/tmp/chord-scan-after.png`, and
+`/tmp/chord-scan-erased.png`.

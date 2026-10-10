@@ -46,6 +46,10 @@ fn trace_flags_follow_undo_and_round_trip_for_supported_shapes() {
             include_bytes!("../../../../../tests/fixtures/trace_arc_original.gsp").as_slice(),
             4,
         ),
+        (
+            include_bytes!("../../../../../tests/fixtures/chord_scan_original.gsp").as_slice(),
+            56,
+        ),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);

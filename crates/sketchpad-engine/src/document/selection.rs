@@ -802,7 +802,8 @@ impl Document {
                             || self.line_points(id).is_some()
                             || o.kind.is_circle()
                             || is_arc_kind(&o.kind)
-                            || o.kind.is_polygon())
+                            || o.kind.is_polygon()
+                            || matches!(o.kind, Kind::SampledMapped(_)))
                         && o.tracing != tracing
                 })
             })
