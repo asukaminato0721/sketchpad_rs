@@ -24,10 +24,13 @@ struct GraphicsState {
     geometry: GeometryRenderer,
     next_animation_frame: Instant,
     next_ui_frame: Option<Instant>,
+    first_frame_pending: bool,
+    last_surface_issue: Option<&'static str>,
 }
 
 impl GraphicsState {
     fn new(event_loop: &ActiveEventLoop) -> Self {
+        log::info!("Startup: create window");
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -37,26 +40,43 @@ impl GraphicsState {
                 )
                 .expect("window"),
         );
+        log::info!(
+            "Window created: size={:?}; scale={}",
+            window.inner_size(),
+            window.scale_factor()
+        );
         // Give GLES the compositor connection up front.  Creating the default
         // instance without it can leave Vulkan as the only active backend on
         // software/Xvfb displays, even though a working GL adapter is present.
         // `with_env` also makes WGPU_BACKEND useful for deterministic demos and
         // troubleshooting without changing normal backend selection.
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
-                event_loop.owned_display_handle(),
-            ))
-            .with_env(),
+        let descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+            event_loop.owned_display_handle(),
+        ))
+        .with_env();
+        log::info!(
+            "Startup: create graphics instance; backends={:?}; flags={:?}",
+            descriptor.backends,
+            descriptor.flags
         );
+        let instance = wgpu::Instance::new(descriptor);
+        log::info!("Startup: create surface");
         let surface = instance.create_surface(window.clone()).expect("surface");
+        log::info!("Startup: request graphics adapter");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
         }))
         .expect("graphics adapter");
+        log::info!("Graphics adapter: {:?}", adapter.get_info());
+        log::info!("Startup: request graphics device");
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .expect("graphics device");
+        device.set_device_lost_callback(|reason, message| {
+            log::warn!("Graphics device lost: {reason:?}; {message}");
+            log::logger().flush();
+        });
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -70,8 +90,10 @@ impl GraphicsState {
         {
             config.format = format;
         }
+        log::info!("Startup: configure surface; {config:?}");
         surface.configure(&device, &config);
 
+        log::info!("Startup: initialize interface");
         let ctx = egui::Context::default();
         super::chrome::apply_style(&ctx);
         let egui_state = egui_winit::State::new(
@@ -82,12 +104,15 @@ impl GraphicsState {
             None,
             None,
         );
+        log::info!("Startup: create interface renderer");
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
             config.format,
             egui_wgpu::RendererOptions::default(),
         );
+        log::info!("Startup: create geometry renderer");
         let geometry = GeometryRenderer::new(&device, config.format);
+        log::info!("Startup: graphics initialized; waiting for first frame");
         window.request_redraw();
 
         Self {
@@ -104,6 +129,8 @@ impl GraphicsState {
             geometry,
             next_animation_frame: Instant::now(),
             next_ui_frame: None,
+            first_frame_pending: true,
+            last_surface_issue: None,
         }
     }
 
@@ -122,10 +149,16 @@ impl GraphicsState {
             return;
         }
 
+        if self.first_frame_pending {
+            log::info!("First frame: update document and load fonts");
+        }
         editor.tick_animation_clock();
         editor.prune_faded_traces();
         let input = self.egui_state.take_egui_input(&self.window);
         editor.sync_document_fonts(&self.ctx);
+        if self.first_frame_pending {
+            log::info!("First frame: build interface");
+        }
         let mut viewport = None;
         let mut output = self.ctx.run_ui(input, |ui| viewport = Some(editor.ui(ui)));
         let title = editor.window_title();
@@ -154,7 +187,24 @@ impl GraphicsState {
         }
         output.textures_delta.clear();
 
-        let frame = match self.surface.get_current_texture() {
+        if self.first_frame_pending {
+            log::info!("First frame: acquire surface texture");
+        }
+        let texture = self.surface.get_current_texture();
+        let issue = match &texture {
+            wgpu::CurrentSurfaceTexture::Success(_) => None,
+            wgpu::CurrentSurfaceTexture::Suboptimal(_) => Some("suboptimal"),
+            wgpu::CurrentSurfaceTexture::Lost => Some("lost"),
+            wgpu::CurrentSurfaceTexture::Outdated => Some("outdated"),
+            wgpu::CurrentSurfaceTexture::Timeout => Some("timeout"),
+            wgpu::CurrentSurfaceTexture::Occluded => Some("occluded"),
+            wgpu::CurrentSurfaceTexture::Validation => Some("validation"),
+        };
+        if issue != self.last_surface_issue {
+            log::info!("Surface status: {}", issue.unwrap_or("ready"));
+            self.last_surface_issue = issue;
+        }
+        let frame = match texture {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
@@ -174,6 +224,9 @@ impl GraphicsState {
             pixels_per_point: output.pixels_per_point,
         };
         let evaluated = editor.evaluated_document();
+        if self.first_frame_pending {
+            log::info!("First frame: render geometry");
+        }
         self.geometry.render_evaluated(
             crate::render::RenderTarget {
                 device: &self.device,
@@ -223,9 +276,16 @@ impl GraphicsState {
             self.egui_renderer.render(&mut pass, &jobs, &screen);
         }
         command_buffers.push(encoder.finish());
+        if self.first_frame_pending {
+            log::info!("First frame: submit and present");
+        }
         self.queue.submit(command_buffers);
         self.window.pre_present_notify();
         self.queue.present(frame);
+        if self.first_frame_pending {
+            log::info!("First frame presented");
+            self.first_frame_pending = false;
+        }
         for id in &free_textures {
             self.egui_renderer.free_texture(id);
         }
@@ -287,6 +347,7 @@ impl ApplicationHandler<mcp::Event> for Application {
                 let _ = reply.send(self.editor.mcp_call(call));
             }
             mcp::Event::Disconnected => {
+                log::info!("MCP input disconnected");
                 if self.editor.doc.dirty {
                     self.editor.pending_action = Some(PendingAction::Quit);
                 } else {
@@ -300,12 +361,14 @@ impl ApplicationHandler<mcp::Event> for Application {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        log::info!("Application resumed");
         if self.graphics.is_none() {
             self.graphics = Some(GraphicsState::new(event_loop));
         }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        log::info!("Application suspended");
         self.graphics = None;
     }
 
@@ -327,6 +390,10 @@ impl ApplicationHandler<mcp::Event> for Application {
             .on_window_event(&graphics.window, &event);
         match event {
             WindowEvent::CloseRequested => {
+                log::info!(
+                    "Window close requested; unsaved_changes={}",
+                    self.editor.doc.dirty
+                );
                 if self.editor.doc.dirty {
                     self.editor.pending_action = Some(PendingAction::Quit);
                     graphics.window.request_redraw();
@@ -373,13 +440,14 @@ pub(crate) fn run() {
             return;
         }
     }
+    log::info!("Startup: load document; source={source:?}; mcp={mcp_enabled}");
     let (doc, untitled_name) = match source {
         Some(path) if path.as_os_str() == "--demo" => {
             match sketchpad_engine::demo::geometry_document(sketchpad_engine::demo::GEOMETRY_STEPS)
             {
                 Ok(document) => (document, "Demo"),
                 Err(error) => {
-                    eprintln!("Could not create the built-in demo: {error}");
+                    log::error!("Could not create the built-in demo: {error}");
                     (Document::new(), "Untitled")
                 }
             }
@@ -387,12 +455,13 @@ pub(crate) fn run() {
         Some(path) => match Document::open(&path) {
             Ok(document) => (document, "Untitled"),
             Err(error) => {
-                eprintln!("Could not open {}: {error}", path.display());
+                log::error!("Could not open {}: {error}", path.display());
                 (Document::new(), "Untitled")
             }
         },
         None => (Document::new(), "Untitled"),
     };
+    log::info!("Startup: create event loop");
     let event_loop = EventLoop::<mcp::Event>::with_user_event()
         .build()
         .expect("event loop");
@@ -400,6 +469,7 @@ pub(crate) fn run() {
     if mcp_enabled {
         mcp::start(event_loop.create_proxy());
     }
+    log::info!("Startup: initialize editor");
     let mut editor = Editor::new(doc);
     editor.language = super::i18n::Language::load();
     editor.untitled_name = untitled_name;
@@ -407,6 +477,7 @@ pub(crate) fn run() {
         editor,
         graphics: None,
     };
+    log::info!("Startup: run event loop");
     event_loop
         .run_app(&mut application)
         .expect("window application");

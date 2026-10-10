@@ -17,6 +17,22 @@ Linux also needs system graphics libraries, ALSA, and an X11 or Wayland session.
 Chinese text uses an embedded font. See the font details below.
 Windows and macOS builds are experimental. Linux remains the main development platform.
 
+### Startup and crash logs
+
+Each launch creates a separate `logs/sketchpad-<time>-<pid>.log` beside the executable.
+Logs include the system version, selected graphics adapter and driver, startup stages,
+first frame, graphics warnings, and Rust panic backtraces. Release builds also record
+the commit from the adjacent `BUILD-INFO.json`. Each record is written immediately.
+Logs remain on this computer. The editor does not upload them.
+
+If the executable directory is not writable, Windows uses
+`%LOCALAPPDATA%\Sketchpad RS\logs`. The final fallback is `sketchpad-rs/logs`
+inside the system temporary directory. The console also shows the log path.
+After a failed launch, send the newest log with the bug report.
+Previous logs remain available after a successful restart. You can remove old logs.
+A native driver crash or forced termination can leave only the last recorded stage,
+without a Rust backtrace. An absent normal-exit record alone does not identify the cause.
+
 Each push to `master` builds all four packages. The workflow updates the `rolling`
 tag and prerelease only after all builds and checks pass. Pull requests build
 downloadable Actions artifacts without publishing a release. To run the workflow
