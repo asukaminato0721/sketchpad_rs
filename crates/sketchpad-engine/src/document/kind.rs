@@ -190,6 +190,10 @@ impl Kind {
     pub fn is_line(&self) -> bool {
         straight_kind_mode(self) == Some(LineMode::Line)
     }
+    /// Classify straight geometry without evaluating its coordinates or parents.
+    pub fn straight_mode(&self) -> Option<LineMode> {
+        straight_kind_mode(self)
+    }
     pub fn is_polygon(&self) -> bool {
         matches!(
             self,

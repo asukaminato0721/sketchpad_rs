@@ -120,10 +120,13 @@ impl Editor {
         let mut open = true;
         egui::Window::new(tr("Object Information"))
             .id(egui::Id::new("object_information"))
-            .default_width(260.)
+            .default_width(380.)
+            .default_height(620.)
             .open(&mut open)
             .vscroll(true)
             .show(root.ctx(), |ui| {
+                self.dependency_inspector_ui(ui);
+                ui.separator();
                 if self.tool == Tool::Text {
                     ui.label(tr("New text"));
                     ui.text_edit_multiline(&mut self.text_draft);
@@ -334,7 +337,6 @@ impl Editor {
                     self.inspected = None;
                 }
                 ui.separator();
-                ui.label(tr(format!("{} objects", self.doc.objects.len())));
                 if let Some(restriction) = self.doc.edit_restriction() {
                     let reason = match restriction {
                         EditRestriction::UnsupportedObjects => "Some objects are not supported",

@@ -16,6 +16,7 @@ mod files;
 pub(crate) mod fonts;
 mod function_dialogs;
 mod i18n;
+mod inspector;
 mod mcp;
 mod measurements;
 mod menu;
@@ -265,6 +266,7 @@ struct PresentationTrack {
 struct Editor {
     language: i18n::Language,
     show_inspector: bool,
+    inspector: inspector::InspectorState,
     show_about: bool,
     doc: Document,
     evaluation_cache: std::cell::RefCell<sketchpad_engine::document::EvaluationCache>,
@@ -455,6 +457,7 @@ impl Editor {
         let mut e = Self {
             language: i18n::Language::English,
             show_inspector: false,
+            inspector: Default::default(),
             show_about: false,
             doc,
             evaluation_cache: Default::default(),

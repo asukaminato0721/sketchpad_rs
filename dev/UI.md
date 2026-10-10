@@ -11,6 +11,43 @@ The layout uses the Sketchpad 5 reference in
 tools. Object Information is a floating panel. It retains text editing, label
 editing, text-range formatting, and iteration controls from the former sidebar.
 
+## Object dependency inspector
+
+Open **Window → Object Information** or click the `i` button in the tool strip.
+The inspector lists the current page's objects, including hidden objects.
+Each row shows the original ID, type, and label. The filter accepts an ID,
+a type, or label text.
+
+Choose **Depends on** to expand source objects. Choose **Used by** to expand
+objects that depend on the row's object. Shared dependencies can appear in
+several branches. All occurrences refer to the same document object.
+
+Click a row to select that object on the canvas. Ctrl-click or Shift-click adds
+or removes it from the selection. Double-click centers supported geometry in the
+canvas. Hidden objects stay hidden. Use **Properties** to change their visibility.
+Canvas selections highlight the corresponding rows. **Show selected** clears the
+filter and scrolls to the selected root. Selection and navigation do not create
+undo steps. The existing text and label controls remain below the tree.
+
+`editor/inspector.rs` uses a tagless-final display algebra, `DependencyView`.
+The generic traversal calls `object` and `notice`. Each object operation receives
+a branch continuation. The interpreter decides whether to run that continuation.
+The traversal does not construct a tagged UI tree. `EguiDependencyView` renders
+the controls and records selection intents. The test interpreter records paths
+and can skip collapsed branches without starting egui.
+
+The graph uses `Document::dependencies_of`, including native midpoint hosts.
+Reverse edges supply the **Used by** view. A branch stops at a cycle, 24 levels,
+or 256 visited entries. Deleted objects are omitted. Missing references produce
+a notice. Select an object in a truncated branch, then choose **Show selected**
+to inspect its root separately.
+The graph is rebuilt from current document state when the inspector renders, so
+construction, edits, deletion, undo, and redo appear without a separate cache.
+Object type labels use the stored geometry class. They do not evaluate source
+coordinates. This also preserves type labels when source geometry is undefined.
+Evaluating geometry for each label previously blocked the inspector on large
+documents, including the 38-page physics teaching sample with 7,752 objects.
+
 ## Translations
 
 `editor/i18n.rs` selects English or Simplified Chinese on the UI thread.
@@ -49,3 +86,15 @@ configuration directory. It checks Chinese startup, a menu language change,
 configuration persistence after restart, and the point tool. It writes captures
 to `/tmp/sketchpad-ui-*.png`. The menu coordinates assume the default window size
 and scale on the virtual display.
+
+For a local large-file regression, run:
+
+```sh
+SKETCHPAD_INSPECTOR_SAMPLE=/path/to/sample.gsp cargo test -p sketchpad-editor external_sample_inspector_frames --lib -- --ignored --nocapture
+xvfb-run -a -s '-screen 0 1280x800x24' python3 dev/inspector_smoke.py /path/to/sample.gsp
+```
+
+The first check measures dependency metadata and inspector frames on every page.
+The window check opens Object Information, checks event-loop response time, and
+selects the first object. Both checks use a two-second regression limit.
+The window check saves `/tmp/sketchpad-inspector-sample.png`.

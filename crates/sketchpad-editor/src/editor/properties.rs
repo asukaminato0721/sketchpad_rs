@@ -16,7 +16,7 @@ use sketchpad_engine::function_records::{
 };
 use sketchpad_engine::style_records::VisualStyle;
 
-fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str {
+pub(super) fn object_type_name(object: &Object) -> &'static str {
     if object.kind.is_point() {
         return "Point";
     }
@@ -26,7 +26,7 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
     ) {
         return "Axis";
     }
-    if let Some((_, _, mode)) = doc.line_points(id) {
+    if let Some(mode) = object.kind.straight_mode() {
         return match mode {
             LineMode::Segment => "Segment",
             LineMode::Ray => "Ray",
@@ -87,7 +87,7 @@ fn object_description(doc: &Document, id: usize) -> String {
     let Some(object) = doc.objects.get(id.saturating_sub(1)) else {
         return format!("Object {id}");
     };
-    let object_type = object_type_name(doc, id, object);
+    let object_type = object_type_name(object);
     let label = object
         .label
         .as_ref()

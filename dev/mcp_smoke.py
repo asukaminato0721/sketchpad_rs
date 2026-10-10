@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 
 
 class Client:
-    def __init__(self, binary):
+    def __init__(self, binary, document="--demo"):
         env = os.environ.copy()
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("WAYLAND_SOCKET", None)
@@ -26,7 +26,7 @@ class Client:
         )
         self.log = tempfile.TemporaryFile()
         self.process = subprocess.Popen(
-            [str(binary), "--mcp", "--demo"],
+            [str(binary), "--mcp", str(document)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self.log,
