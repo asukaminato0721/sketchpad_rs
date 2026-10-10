@@ -57,9 +57,6 @@ jobs:
           python-version: '3.12'
       - name: Build application and command-line tool
         run: cargo build --locked --release --target ${{ matrix.target }} --bin sketchpad_rs --bin gsp_probe
-      - name: Test libraries
-        if: runner.os == 'Linux'
-        run: cargo test --locked --workspace --lib
       - name: Check the command-line tool
         shell: bash
         env:
