@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn measurement_captions_and_calculation_sources_keep_native_names() {
+    use crate::text_records::LabelAux;
+
+    let mut doc = Document::new();
+    let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+    let b = doc.add(Kind::Free(Point { x: 96., y: 0. }));
+    let c = doc.add(Kind::Free(Point { x: 96., y: 96. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let length = doc.add(Kind::SegmentLength(segment));
+    let angle = doc.add(Kind::AngleMeasurement(a, b, c));
+    let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+    let area = doc.add(Kind::PolygonArea(polygon));
+    doc.set_point_label(c, "C（拖动改变角度）", true).unwrap();
+    for (id, name, value) in [
+        (length, "AB", "2.54 cm"),
+        (angle, "∠B", "90.00°"),
+        (area, "重叠部分面积", "3.23 cm²"),
+    ] {
+        doc.objects.edit(id - 1).label = Some(LabelAux::new_point(name, false, (0, 0)).unwrap());
+        doc.objects.edit(id - 1).measurement_precision = Some(2);
+        assert_eq!(
+            doc.measurement_text(id).unwrap(),
+            format!("{name} = {value}")
+        );
+        assert_eq!(doc.calculation_source_name(id).as_deref(), Some(name));
+        let calc = doc.add_parameter_calculation(id, "v*2", (10, 40)).unwrap();
+        let expression = doc.parameter_calculation_expression(calc).unwrap();
+        assert!(expression.contains(name), "{expression}");
+        assert!(!expression.contains("拖动"), "{expression}");
+        assert_eq!(
+            doc.numeric_value(calc),
+            doc.numeric_value(id).map(|v| v * 2.)
+        );
+    }
+    assert_eq!(doc.length_measurement_name(length).as_deref(), Some("AB"));
+    assert!(doc.move_point(c, Point { x: 192., y: 96. }));
+    assert_eq!(doc.measurement_text(angle).as_deref(), Some("∠B = 135.00°"));
+    // Documents without stored caption names retain the existing fallback.
+    doc.objects.edit(length - 1).label = None;
+    assert_eq!(
+        doc.measurement_text(length).as_deref(),
+        Some("Length = 2.54 cm")
+    );
+}
+
+#[test]
 fn point_line_distance_matches_native_supporting_lines_and_dependency_edits() {
     for shape in ["segment", "ray", "line"] {
         let bytes = std::fs::read(format!(

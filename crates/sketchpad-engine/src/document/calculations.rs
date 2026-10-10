@@ -1086,6 +1086,9 @@ impl Document {
         if source_object.deleted {
             return None;
         }
+        if let Some(name) = self.measurement_caption_name(source) {
+            return Some(name.to_owned());
+        }
         let source = &source;
         let name = match &source_object.kind {
             Kind::FunctionDefinition(_)
@@ -1156,6 +1159,11 @@ impl Document {
         Some(name)
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
+        if self.objects.get(id.checked_sub(1)?)?.kind.numeric_unit() == Some(NumericUnit::Length)
+            && let Some(name) = self.measurement_caption_name(id)
+        {
+            return Some(name.to_owned());
+        }
         if let Kind::ParameterCalculation(_, g) = &self.objects.get(id.checked_sub(1)?)?.kind {
             return (g.unit() == NumericUnit::Length)
                 .then(|| self.parameter_calculation_expression(id))

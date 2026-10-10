@@ -100,12 +100,6 @@ impl Editor {
             if let Some(text) = doc.measurement_text(id) {
                 rows.push((id, text));
             }
-            if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
-                let value = doc
-                    .measurement_value_text(id)
-                    .unwrap_or_else(|| "undefined".into());
-                rows.push((id, format!("Slope = {value}")));
-            }
             if let Some(value) = doc.coordinate_measure_text(id) {
                 rows.push((id, value));
             }

@@ -239,40 +239,48 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
         }
         Kind::DataTable(_, group) => {
             let rows = group.general_cells()?;
-            let columns = rows.first()?.len();
-            let widths = (0..columns)
-                .map(|column| {
-                    rows.iter()
-                        .filter_map(|row| row.get(column))
-                        .map(|cell| cell.chars().count())
-                        .max()
-                        .unwrap_or(0)
-                })
-                .collect::<Vec<_>>();
-            let lines = rows
-                .into_iter()
-                .map(|row| {
-                    row.into_iter()
-                        .enumerate()
-                        .map(|(column, cell)| {
-                            if column + 1 == columns {
-                                cell
-                            } else {
-                                format!("{cell:>width$}", width = widths[column])
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("  ")
-                })
-                .collect();
+            let lines = table_lines(rows)?;
             Some((group.anchor(), lines))
         }
         _ => None,
     }
 }
 
+fn table_lines(rows: Vec<Vec<String>>) -> Option<Vec<String>> {
+    let columns = rows.first()?.len();
+    let widths = (0..columns)
+        .map(|column| {
+            rows.iter()
+                .filter_map(|row| row.get(column))
+                .map(|cell| cell.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect::<Vec<_>>();
+    let lines = rows
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .enumerate()
+                .map(|(column, cell)| {
+                    if column + 1 == columns {
+                        cell
+                    } else {
+                        format!("{cell:>width$}", width = widths[column])
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        })
+        .collect();
+    Some(lines)
+}
+
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
+    if let Kind::DataTable(_, group) = &object.kind {
+        return Some((group.anchor(), table_lines(doc.data_table_cells(id)?)?));
+    }
     if matches!(object.kind, Kind::IterationValues(..)) {
         let rows = doc.iteration_value_table(id)?;
         let columns = rows.first()?.len();
@@ -2194,15 +2202,6 @@ fn svg_page_with_layout(
     {
         let caption = doc
             .measurement_text(object.id)
-            .or_else(|| {
-                matches!(object.kind, Kind::SlopeMeasurement(_, _)).then(|| {
-                    format!(
-                        "Slope = {}",
-                        doc.measurement_value_text(object.id)
-                            .unwrap_or_else(|| "undefined".into())
-                    )
-                })
-            })
             .or_else(|| doc.coordinate_measure_text(object.id))
             .or_else(|| doc.value_equation_text(object.id));
         if let Some(text) = caption {

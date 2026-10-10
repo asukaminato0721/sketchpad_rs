@@ -2,6 +2,29 @@ use super::{Document, Kind};
 use crate::table_records::TableGroup;
 
 impl Document {
+    /// Preserve recorded rows and evaluate the table's final, live row.
+    pub fn data_table_cells(&self, id: usize) -> Option<Vec<Vec<String>>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::DataTable(sources, group) = &object.kind else {
+            return None;
+        };
+        let mut rows = group.general_cells()?;
+        let current = rows.last_mut()?;
+        if current.len() != sources.len() {
+            return None;
+        }
+        for (cell, &source) in current.iter_mut().zip(sources) {
+            *cell = self
+                .numeric_value_text(source)
+                .or_else(|| self.text_content(source).map(|(text, _)| text))
+                .unwrap_or_else(|| "undefined".into());
+        }
+        Some(rows)
+    }
+
     pub fn tabulate_default_parameter(
         &mut self,
         source: usize,
@@ -181,5 +204,49 @@ impl Document {
         self.checkpoint();
         self.objects.edit(id - 1).kind = kind;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{EvaluationCache, Point};
+
+    #[test]
+    fn live_table_row_follows_geometry_without_changing_recorded_rows() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 96., y: 96. }));
+        let length = doc.add(Kind::PointDistance(a, b));
+        let c = doc.add(Kind::Free(Point { x: 96., y: 0. }));
+        let angle = doc.add(Kind::AngleMeasurement(b, a, c));
+        doc.objects.edit(length - 1).measurement_precision = Some(2);
+        doc.objects.edit(angle - 1).measurement_precision = Some(3);
+        let mut group =
+            TableGroup::pair_snapshot_rows_for_sources(2, (20, 40), [length as u32, angle as u32])
+                .unwrap();
+        group.set_pair_row_values(0, [97., 98.]).unwrap();
+        let group = TableGroup::parse_general(group.as_bytes()).unwrap();
+        let stored = group.general_cells().unwrap();
+        let bytes = group.as_bytes().to_vec();
+        let table = doc.add(Kind::DataTable(vec![length, angle], group));
+        let mut cache = EvaluationCache::default();
+        let before = cache.evaluate(&doc);
+        let rows = before.data_table_cells(table).unwrap();
+        assert_eq!(rows[..2], stored[..2]);
+        assert_eq!(rows[2], ["3.59 cm", "45.000°"]);
+
+        doc.checkpoint();
+        assert!(doc.move_point(b, Point { x: 0., y: 0. }));
+        let after = cache.evaluate(&doc).data_table_cells(table).unwrap();
+        assert_eq!(after[..2], stored[..2]);
+        assert_eq!(after[2], ["0.00 cm", "undefined"]);
+        assert_eq!(before.data_table_cells(table).unwrap(), rows);
+        let Kind::DataTable(_, unchanged) = &doc.objects[table - 1].kind else {
+            unreachable!()
+        };
+        assert_eq!(unchanged.as_bytes(), bytes);
+        doc.undo();
+        assert_eq!(cache.evaluate(&doc).data_table_cells(table).unwrap(), rows);
     }
 }

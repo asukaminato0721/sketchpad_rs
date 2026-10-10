@@ -174,6 +174,20 @@ impl Document {
             usize::from(object.measurement_precision?),
         ))
     }
+    /// The caption name is independent of the geometric label visibility flag.
+    pub(super) fn measurement_caption_name(&self, id: usize) -> Option<&str> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted || !object.kind.is_measurement() {
+            return None;
+        }
+        object
+            .label
+            .as_ref()?
+            .name_utf8()
+            .ok()
+            .filter(|name| !name.is_empty())
+    }
+
     pub fn measurement_text(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let name = match object.kind {
@@ -241,9 +255,13 @@ impl Document {
             Kind::ArcAngle(_) => "Arc Angle",
             Kind::ArcLength(_) | Kind::CircleArcLength(_, _, _) => "Arc Length",
             Kind::AngleMeasurement(_, _, _) => "Angle",
+            Kind::SlopeMeasurement(_, _) => "Slope",
             _ => return None,
         };
-        let value = self.measurement_value_text(id)?;
+        let name = self.measurement_caption_name(id).unwrap_or(name);
+        let value = self.measurement_value_text(id).or_else(|| {
+            matches!(object.kind, Kind::SlopeMeasurement(_, _)).then(|| "undefined".into())
+        })?;
         let unit = object.kind.numeric_unit()?.suffix();
         Some(format!("{name} = {value}{unit}"))
     }
@@ -551,18 +569,31 @@ impl Document {
         };
         let name = self.coordinate_point_name(first)?;
         let value = self.coordinate_measure_value(id)?;
+        let caption_name = |fallback: String| {
+            self.measurement_caption_name(id)
+                .map(str::to_owned)
+                .unwrap_or(fallback)
+        };
         match (kind, value) {
             (CoordinateMeasureKind::Coordinates, CoordinateMeasureValue::Pair(p)) => {
                 Some(format!("{name}: ({:.2}, {:.2})", p.x, p.y))
             }
-            (CoordinateMeasureKind::Abscissa, CoordinateMeasureValue::Scalar(_)) => {
-                Some(format!("x_{name} = {}", self.measurement_value_text(id)?))
-            }
-            (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(_)) => {
-                Some(format!("y_{name} = {}", self.measurement_value_text(id)?))
-            }
+            (CoordinateMeasureKind::Abscissa, CoordinateMeasureValue::Scalar(_)) => Some(format!(
+                "{} = {}",
+                caption_name(format!("x_{name}")),
+                self.measurement_value_text(id)?
+            )),
+            (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(_)) => Some(format!(
+                "{} = {}",
+                caption_name(format!("y_{name}")),
+                self.measurement_value_text(id)?
+            )),
             (CoordinateMeasureKind::GraphCoordinateX, CoordinateMeasureValue::Scalar(_)) => {
-                Some(format!("r_{name} = {}", self.measurement_value_text(id)?))
+                Some(format!(
+                    "{} = {}",
+                    caption_name(format!("r_{name}")),
+                    self.measurement_value_text(id)?
+                ))
             }
             (CoordinateMeasureKind::GraphCoordinateY, CoordinateMeasureValue::Scalar(_)) => {
                 let value = self.numeric_value(id)?;
@@ -572,16 +603,21 @@ impl Document {
                     (value, "°")
                 };
                 Some(format!(
-                    "θ_{name} = {}{suffix}",
+                    "{} = {}{suffix}",
+                    caption_name(format!("θ_{name}")),
                     crate::table_records::format_numeric_value(
                         value,
                         usize::from(object.measurement_precision?)
                     )
                 ))
             }
-            (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(_)) => Some(
-                format!("Coordinate Distance = {}", self.measurement_value_text(id)?),
-            ),
+            (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(_)) => {
+                Some(format!(
+                    "{} = {}",
+                    caption_name("Coordinate Distance".into()),
+                    self.measurement_value_text(id)?
+                ))
+            }
             _ => None,
         }
     }
@@ -771,7 +807,12 @@ impl Document {
         };
         Some(match value {
             EquationValue::PointValue(_) => {
-                format!("Value of Point = {}", self.measurement_value_text(id)?)
+                format!(
+                    "{} = {}",
+                    self.measurement_caption_name(id)
+                        .unwrap_or("Value of Point"),
+                    self.measurement_value_text(id)?
+                )
             }
             EquationValue::Line { slope, intercept } => {
                 let sign = if intercept < 0. { "−" } else { "+" };

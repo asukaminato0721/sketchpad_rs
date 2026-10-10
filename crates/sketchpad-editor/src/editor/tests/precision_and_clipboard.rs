@@ -1,6 +1,205 @@
 use super::*;
 
 #[test]
+#[ignore = "Set SKETCHPAD_MATH_SAMPLE to the junior mathematics teaching sample"]
+fn external_bisector_animation_updates_table_values() {
+    let bytes = std::fs::read(std::env::var("SKETCHPAD_MATH_SAMPLE").unwrap()).unwrap();
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    doc.active_page = 9;
+    let mut editor = Editor::new(doc);
+    let before =
+        crate::render::number_lines_for_object(&editor.evaluated_document(), 1496).unwrap();
+    let initial = editor.doc.numeric_value(1488).unwrap();
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100., 750.)),
+        scale: 1.,
+        center: editor.center,
+    };
+    let Kind::AnimationButton { anchor, label, .. } = &editor.doc.objects[1494].kind else {
+        panic!("Expected animation button")
+    };
+    let click = crate::render::action_button_rect(&viewport, *anchor, label).center();
+    editor.click(&viewport, click, false);
+    assert_eq!(editor.animations.len(), 1);
+    for _ in 0..30 {
+        editor.tick_animation(0.1);
+    }
+    assert!((editor.doc.numeric_value(1488).unwrap() - initial).abs() > 0.01);
+    let evaluated = editor.evaluated_document();
+    let after = crate::render::number_lines_for_object(&evaluated, 1496).unwrap();
+    assert_ne!(
+        before.1, after.1,
+        "The table must follow the animated point"
+    );
+    for id in [1488, 1489, 1473, 1474] {
+        assert!(
+            after
+                .1
+                .last()
+                .unwrap()
+                .contains(&evaluated.numeric_value_text(id).unwrap())
+        );
+    }
+    let svg = crate::render::svg_page(&evaluated, &viewport).unwrap();
+    assert!(svg.contains(after.1.last().unwrap()));
+    editor.click(&viewport, click, false);
+    assert!(editor.animations.is_empty());
+    editor.tick_animation(0.5);
+    assert_eq!(
+        crate::render::number_lines_for_object(&editor.evaluated_document(), 1496).unwrap(),
+        after
+    );
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        crate::render::number_lines_for_object(&reopened, 1496).unwrap(),
+        after
+    );
+
+    // Dragging the independent point P must also update the PA and PB columns.
+    assert!(editor.doc.move_point(1469, Point { x: 450., y: 120. }));
+    let moved = editor.evaluated_document();
+    let lines = crate::render::number_lines_for_object(&moved, 1496)
+        .unwrap()
+        .1;
+    assert_ne!(lines, after.1);
+    for id in [1473, 1474] {
+        assert!(
+            lines
+                .last()
+                .unwrap()
+                .contains(&moved.numeric_value_text(id).unwrap())
+        );
+    }
+}
+
+#[test]
+#[ignore = "Set SKETCHPAD_MATH_SAMPLE to the junior mathematics teaching sample"]
+fn external_math_measurements_follow_dragged_points() {
+    let bytes = std::fs::read(std::env::var("SKETCHPAD_MATH_SAMPLE").unwrap()).unwrap();
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    doc.active_page = 16;
+    let mut editor = Editor::new(doc);
+    let before = editor.evaluated_document();
+    let angle_before = before.numeric_value(2524).unwrap();
+    let _ = before.numeric_value(2521);
+    let _ = before.numeric_value(2525);
+    let p = editor.doc.position(2517).unwrap();
+    for dx in [100., -100., 50.] {
+        assert!(editor.doc.move_point(
+            2517,
+            Point {
+                x: p.x + dx,
+                y: p.y + 50.
+            }
+        ));
+        let expected = editor.doc.numeric_value(2524).unwrap();
+        assert!((expected - angle_before).abs() > 1.);
+        let after = editor.evaluated_document();
+        for id in [2524, 2521, 2525] {
+            assert_eq!(
+                after.numeric_value(id),
+                editor.doc.numeric_value(id),
+                "measurement {id}"
+            );
+            assert_eq!(
+                after.measurement_text(id),
+                editor.doc.measurement_text(id),
+                "caption {id}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "Set SKETCHPAD_MATH_SAMPLE to the junior mathematics teaching sample"]
+fn external_math_measurement_captions_match_native() {
+    let bytes = std::fs::read(std::env::var("SKETCHPAD_MATH_SAMPLE").unwrap()).unwrap();
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100., 750.)),
+        scale: 1.,
+        center: Point { x: 450., y: 320. },
+    };
+    for (page, captions) in [
+        (
+            16,
+            vec![(2524, "∠ABC = 68.2°"), (2521, "弧a的度数 = 136.4°")],
+        ),
+        (
+            29,
+            vec![
+                (4576, "重叠部分面积 = 0.60 cm²"),
+                (4578, "道路总面积 = 9.03 cm²"),
+            ],
+        ),
+        (21, vec![(3322, "PA = 8.58 cm"), (3323, "PB = 3.63 cm")]),
+    ] {
+        doc.active_page = page;
+        let rows = Editor::overlay_rows_for(&doc);
+        let svg = crate::render::svg_page(&doc, &viewport).unwrap();
+        for (id, caption) in captions {
+            assert!(rows.contains(&(id, caption.into())), "{rows:?}");
+            assert!(svg.contains(&format!(">{caption}</text>")));
+        }
+    }
+    let (_, lines) = crate::render::number_lines_for_object(&doc, 2525).unwrap();
+    assert_eq!(lines, vec!["(∠ABC ÷ 弧a的度数) = 0.50"]);
+    let (_, lines) = crate::render::number_lines_for_object(&doc, 3324).unwrap();
+    assert_eq!(lines, vec!["(PA ÷ PB) = 2.36"]);
+    let mut named = 0;
+    for object in doc.objects.iter() {
+        if object.kind.is_measurement()
+            && let Some(label) = &object.label
+            && let Ok(name) = label.name_utf8()
+            && !name.is_empty()
+            && let Some(caption) = doc.measurement_text(object.id)
+        {
+            assert!(
+                caption.starts_with(&format!("{name} = ")),
+                "{}: {caption}",
+                object.id
+            );
+            named += 1;
+        }
+    }
+    assert_eq!(named, 80);
+    doc.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn named_scalar_captions_reach_desktop_svg_and_undefined_slope() {
+    use sketchpad_engine::text_records::LabelAux;
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../../../tests/fixtures/scalar_precision_coordinates_port.gsp"),
+        None,
+    )
+    .unwrap();
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+        scale: 1.,
+        center: Point { x: 200., y: 180. },
+    };
+    for (id, name, value) in [
+        (11, "横坐标", "1"),
+        (13, "距离", "1.30319"),
+        (14, "斜率", "0.0000"),
+    ] {
+        doc.objects.edit(id - 1).label = Some(LabelAux::new_point(name, false, (0, 0)).unwrap());
+        let caption = format!("{name} = {value}");
+        assert!(Editor::overlay_rows_for(&doc).contains(&(id, caption.clone())));
+        assert!(
+            crate::render::svg_page(&doc, &viewport)
+                .unwrap()
+                .contains(&format!(">{caption}</text>"))
+        );
+    }
+    doc.move_point(2, Point { x: 150., y: 175. });
+    let rows = Editor::overlay_rows_for(&doc);
+    assert_eq!(rows.iter().filter(|(id, _)| *id == 14).count(), 1);
+    assert!(rows.contains(&(14, "斜率 = undefined".into())));
+}
+
+#[test]
 fn scalar_measurement_precision_reaches_desktop_and_svg_captions() {
     let viewport = Viewport {
         rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
