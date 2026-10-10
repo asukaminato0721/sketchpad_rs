@@ -1,10 +1,12 @@
 //! The traversal is a tagless-final program over `DependencyView`. It does not
 //! build a UI tree. Each interpreter decides whether to evaluate a branch body.
 use super::{Editor, Tool, i18n::tr};
-use sketchpad_engine::document::{Document, Kind, Point};
+use sketchpad_engine::document::{Document, EvaluatedDocument, Kind, Point};
 use std::{
     cell::Cell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
+    ops::Range,
+    sync::Arc,
 };
 
 #[derive(Default)]
@@ -12,6 +14,23 @@ pub(super) struct InspectorState {
     query: String,
     dependents: bool,
     selection: Vec<usize>,
+    graph: Option<(Arc<EvaluatedDocument>, Arc<DependencyGraph>)>,
+    expanded: HashSet<egui::Id>,
+}
+
+impl InspectorState {
+    fn graph(&mut self, document: Arc<EvaluatedDocument>) -> Arc<DependencyGraph> {
+        if let Some((previous, graph)) = &self.graph
+            && Arc::ptr_eq(previous, &document)
+        {
+            return graph.clone();
+        }
+        // Visibility can evaluate dynamic colors. Use the shared evaluation
+        // snapshot so these checks reuse the canvas's cached values.
+        let graph = Arc::new(DependencyGraph::new(&document));
+        self.graph = Some((document, graph.clone()));
+        graph
+    }
 }
 
 struct ObjectNode {
@@ -174,8 +193,46 @@ struct EguiDependencyView<'a> {
     ui: egui::Ui,
     selected: &'a BTreeSet<usize>,
     pick: &'a Cell<Option<Pick>>,
-    reveal: Option<usize>,
     active_page: usize,
+    expanded: &'a HashSet<egui::Id>,
+    namespace: egui::Id,
+    toggle: &'a Cell<Option<egui::Id>>,
+    visible: Range<usize>,
+    row_index: usize,
+    row_height: f32,
+    depth: usize,
+}
+
+/// Count expanded rows without creating widgets or a UI tree. This interpreter
+/// and the renderer use the same traversal, including its cycle and size limits.
+struct RowCountView<'a> {
+    expanded: &'a HashSet<egui::Id>,
+    namespace: egui::Id,
+    rows: usize,
+    reveal: Option<usize>,
+    reveal_row: Option<usize>,
+}
+
+impl DependencyView for RowCountView<'_> {
+    fn object(
+        &mut self,
+        node: &ObjectNode,
+        path: &[usize],
+        expandable: bool,
+        body: impl FnOnce(&mut Self),
+    ) {
+        if path.len() == 1 && self.reveal == Some(node.id) {
+            self.reveal_row = Some(self.rows);
+        }
+        self.rows += 1;
+        if expandable && self.expanded.contains(&self.namespace.with(path)) {
+            body(self);
+        }
+    }
+
+    fn notice(&mut self, _message: &str) {
+        self.rows += 1;
+    }
 }
 
 impl EguiDependencyView<'_> {
@@ -184,7 +241,6 @@ impl EguiDependencyView<'_> {
         node: &ObjectNode,
         selected: &BTreeSet<usize>,
         pick: &Cell<Option<Pick>>,
-        reveal: bool,
         active_page: usize,
     ) {
         let response = ui
@@ -192,9 +248,6 @@ impl EguiDependencyView<'_> {
             .on_hover_text(tr(
                 "Click to select. Ctrl/Shift-click to add or remove. Double-click to center.",
             ));
-        if reveal {
-            response.scroll_to_me(Some(egui::Align::Center));
-        }
         if response.clicked() || response.double_clicked() {
             pick.set(Some(Pick {
                 id: node.id,
@@ -219,46 +272,52 @@ impl DependencyView for EguiDependencyView<'_> {
         expandable: bool,
         body: impl FnOnce(&mut Self),
     ) {
-        let selected = self.selected;
-        let reveal = path.len() == 1 && self.reveal == Some(node.id);
-        let active_page = self.active_page;
-        let pick = self.pick;
-        if expandable {
-            let id = self.ui.make_persistent_id(path);
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                self.ui.ctx(),
-                id,
-                false,
-            )
-            .show_header(&mut self.ui, |ui| {
-                Self::row(ui, node, selected, pick, reveal, active_page)
-            })
-            .body(|ui| {
-                let mut nested = EguiDependencyView {
-                    ui: ui.new_child(egui::UiBuilder::new()),
-                    selected,
-                    pick,
-                    reveal: None,
-                    active_page,
-                };
-                body(&mut nested);
-                ui.advance_cursor_after_rect(nested.ui.min_rect());
+        let id = self.namespace.with(path);
+        let open = expandable && self.expanded.contains(&id);
+        if self.visible.contains(&self.row_index) {
+            self.ui.push_id(id, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(self.row_height);
+                    ui.add_space((path.len() - 1) as f32 * ui.spacing().indent);
+                    let (_, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.spacing().indent, self.row_height),
+                        egui::Sense::click(),
+                    );
+                    if expandable {
+                        egui::collapsing_header::paint_default_icon(ui, f32::from(open), &response);
+                        if response.clicked() {
+                            self.toggle.set(Some(id));
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                    Self::row(ui, node, self.selected, self.pick, self.active_page);
+                });
             });
-        } else {
-            self.ui.horizontal(|ui| {
-                ui.add_space(ui.spacing().indent);
-                Self::row(ui, node, selected, pick, reveal, active_page);
-            });
+        }
+        self.row_index += 1;
+        if open {
+            let previous_depth = self.depth;
+            self.depth = path.len();
+            body(self);
+            self.depth = previous_depth;
         }
     }
     fn notice(&mut self, message: &str) {
-        self.ui.weak(tr(message));
+        if self.visible.contains(&self.row_index) {
+            self.ui.horizontal(|ui| {
+                ui.set_min_height(self.row_height);
+                ui.add_space(self.depth as f32 * ui.spacing().indent);
+                ui.weak(tr(message));
+            });
+        }
+        self.row_index += 1;
     }
 }
 
 impl Editor {
     pub(super) fn dependency_inspector_ui(&mut self, ui: &mut egui::Ui) {
-        let graph = DependencyGraph::new(&self.doc);
+        let evaluated = self.evaluated_document();
+        let graph = self.inspector.graph(evaluated);
         let selection: Vec<_> = self.doc.selected.iter().copied().collect();
         let mut reveal = (selection != self.inspector.selection)
             .then(|| selection.first().copied())
@@ -292,50 +351,88 @@ impl Editor {
             .filter(|node| node.page == self.doc.active_page)
             .collect();
         ui.small(tr(format!("{} objects on this page", page_nodes.len())));
+        let roots: Vec<_> = page_nodes
+            .iter()
+            .filter(|node| {
+                query.is_empty()
+                    || node.title().to_lowercase().contains(&query)
+                    || node.kind.to_lowercase().contains(&query)
+            })
+            .map(|node| node.id)
+            .collect();
+        let namespace = ui.make_persistent_id((
+            "dependency_tree",
+            self.doc.active_page,
+            self.inspector.dependents,
+        ));
+        let mut count = RowCountView {
+            expanded: &self.inspector.expanded,
+            namespace,
+            rows: 0,
+            reveal,
+            reveal_row: None,
+        };
+        for &root in &roots {
+            dependency_branch(
+                &graph,
+                root,
+                self.inspector.dependents,
+                &mut Vec::new(),
+                &mut 256,
+                &mut count,
+            );
+        }
         let pick = Cell::new(None);
-        egui::ScrollArea::both()
+        let toggle = Cell::new(None);
+        let row_height = (ui.text_style_height(&egui::TextStyle::Body)
+            + 2. * ui.spacing().button_padding.y)
+            .max(ui.spacing().interact_size.y);
+        let mut scroll = egui::ScrollArea::both()
             .id_salt("dependency_tree_scroll")
             .max_height(270.)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.push_id(
-                    (
-                        "dependency_tree",
-                        self.doc.active_page,
-                        self.inspector.dependents,
-                    ),
-                    |ui| {
-                        let mut view = EguiDependencyView {
-                            ui: ui.new_child(egui::UiBuilder::new()),
-                            selected: &self.doc.selected,
-                            pick: &pick,
-                            reveal,
-                            active_page: self.doc.active_page,
-                        };
-                        let mut any = false;
-                        for node in page_nodes.iter().filter(|node| {
-                            query.is_empty()
-                                || node.title().to_lowercase().contains(&query)
-                                || node.kind.to_lowercase().contains(&query)
-                        }) {
-                            any = true;
-                            // Each root remains accessible even if another branch reaches its limit.
-                            dependency_branch(
-                                &graph,
-                                node.id,
-                                self.inspector.dependents,
-                                &mut Vec::new(),
-                                &mut 256,
-                                &mut view,
-                            );
-                        }
-                        if !any {
-                            view.notice("No matching objects on this page.");
-                        }
-                        ui.advance_cursor_after_rect(view.ui.min_rect());
-                    },
+            .auto_shrink([false, true]);
+        if let Some(row) = count.reveal_row {
+            scroll = scroll.vertical_scroll_offset(
+                (row as f32 * (row_height + ui.spacing().item_spacing.y) - 120.).max(0.),
+            );
+        }
+        scroll.show_rows(ui, row_height, count.rows.max(1), |ui, visible| {
+            // Fixed-height rows make it possible to omit all offscreen widgets.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            let mut view = EguiDependencyView {
+                ui: ui.new_child(egui::UiBuilder::new()),
+                selected: &self.doc.selected,
+                pick: &pick,
+                active_page: self.doc.active_page,
+                expanded: &self.inspector.expanded,
+                namespace,
+                toggle: &toggle,
+                visible,
+                row_index: 0,
+                row_height,
+                depth: 0,
+            };
+            for &root in &roots {
+                // Each root remains accessible even if another branch reaches its limit.
+                dependency_branch(
+                    &graph,
+                    root,
+                    self.inspector.dependents,
+                    &mut Vec::new(),
+                    &mut 256,
+                    &mut view,
                 );
-            });
+            }
+            if roots.is_empty() {
+                view.notice("No matching objects on this page.");
+            }
+            ui.advance_cursor_after_rect(view.ui.min_rect());
+        });
+        if let Some(id) = toggle.get()
+            && !self.inspector.expanded.remove(&id)
+        {
+            self.inspector.expanded.insert(id);
+        }
         if let Some(pick) = pick.get() {
             self.inspector_pick(pick);
             // A tree click keeps the expanded branch in view. Canvas picks reveal a root.
@@ -592,6 +689,69 @@ mod tests {
     }
 
     #[test]
+    fn cached_graph_tracks_edits_undo_pages_and_document_replacement() {
+        let mut editor = editor();
+        let evaluated = editor.evaluated_document();
+        let original = editor.inspector.graph(evaluated);
+        let evaluated = editor.evaluated_document();
+        assert!(Arc::ptr_eq(&original, &editor.inspector.graph(evaluated)));
+
+        editor.doc.checkpoint();
+        editor.doc.objects.edit(0).visible = false;
+        editor.doc.objects.edit(2).kind = Kind::Midpoint(1, 1);
+        let evaluated = editor.evaluated_document();
+        let changed = editor.inspector.graph(evaluated);
+        assert!(changed.nodes[&1].hidden);
+        assert_eq!(changed.nodes[&3].parents, vec![1]);
+        assert_eq!(changed.nodes[&3].kind, "Midpoint");
+        assert!(!original.nodes[&1].hidden);
+
+        editor.doc.undo();
+        let evaluated = editor.evaluated_document();
+        let restored = editor.inspector.graph(evaluated);
+        assert!(!restored.nodes[&1].hidden);
+        assert_eq!(restored.nodes[&3].parents, vec![1, 2]);
+
+        editor.doc.set_point_label(1, "Renamed", true).unwrap();
+        let evaluated = editor.evaluated_document();
+        assert_eq!(editor.inspector.graph(evaluated).nodes[&1].name, "Renamed");
+        editor.doc.objects.edit(0).page = 1;
+        let evaluated = editor.evaluated_document();
+        assert_eq!(editor.inspector.graph(evaluated).nodes[&1].page, 1);
+
+        editor.doc = Document::new();
+        editor.doc.add(Kind::Free(Point { x: 4., y: 5. }));
+        let evaluated = editor.evaluated_document();
+        let replaced = editor.inspector.graph(evaluated);
+        assert_eq!(replaced.nodes.len(), 1);
+        assert!(replaced.nodes[&1].name.is_empty());
+    }
+
+    #[test]
+    fn row_counts_include_expanded_branches_and_cycle_notices() {
+        let mut graph = DependencyGraph::new(&editor().doc);
+        graph.nodes.get_mut(&1).unwrap().parents = vec![3];
+        let namespace = egui::Id::new("count-test");
+        let mut outline = Outline::default();
+        dependency_branch(&graph, 3, false, &mut vec![], &mut 256, &mut outline);
+        let expanded = outline
+            .paths
+            .iter()
+            .map(|path| namespace.with(path))
+            .collect();
+        let mut count = RowCountView {
+            expanded: &expanded,
+            namespace,
+            rows: 0,
+            reveal: Some(3),
+            reveal_row: None,
+        };
+        dependency_branch(&graph, 3, false, &mut vec![], &mut 256, &mut count);
+        assert_eq!(count.rows, outline.paths.len() + outline.notices.len());
+        assert_eq!(count.reveal_row, Some(0));
+    }
+
+    #[test]
     fn cycle_depth_and_branch_limits_bound_all_interpreters() {
         let mut graph = DependencyGraph::new(&editor().doc);
         graph.nodes.get_mut(&1).unwrap().parents = vec![3];
@@ -766,5 +926,71 @@ mod tests {
         text_center(&output, "被哪些对象使用");
         assert!(!editor.doc.dirty);
         super::super::i18n::Language::English.activate();
+    }
+
+    #[test]
+    fn large_lists_only_layout_visible_rows_and_reveal_distant_selections() {
+        let mut doc = Document::new();
+        doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let prototype = doc.objects[0].clone();
+        doc.objects = (1..=4071)
+            .map(|id| {
+                let mut object = prototype.clone();
+                object.id = id;
+                object.kind = Kind::Free(Point {
+                    x: id as f64,
+                    y: 0.,
+                });
+                object
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let mut editor = Editor::new(doc);
+        let ctx = egui::Context::default();
+        super::super::chrome::apply_style(&ctx);
+        let first = frame(&mut editor, &ctx, vec![]);
+        let object_rows = |output: &FullOutput| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.text().starts_with('#') => {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .count()
+        };
+        assert!(object_rows(&first) < 30);
+        let graph = editor.inspector.graph.as_ref().unwrap().1.clone();
+        frame(&mut editor, &ctx, vec![]);
+        assert!(Arc::ptr_eq(
+            &graph,
+            &editor.inspector.graph.as_ref().unwrap().1
+        ));
+
+        editor.select_only(4000);
+        frame(&mut editor, &ctx, vec![]);
+        let output = frame(&mut editor, &ctx, vec![]);
+        assert!(object_rows(&output) < 30);
+        // Choose a neighboring row, rather than the selected object's detail heading.
+        let neighbor = graph.nodes[&3999].title();
+        let position = text_center(&output, &neighbor);
+        assert!(
+            position.y < 400.,
+            "The selected region must be in the scroll viewport"
+        );
+        click(&mut editor, &ctx, position);
+        assert_eq!(editor.doc.selected, [3999].into());
+
+        editor.inspector.query = "#4071".into();
+        frame(&mut editor, &ctx, vec![]);
+        let output = frame(&mut editor, &ctx, vec![]);
+        let last = text_center(&output, &graph.nodes[&4071].title());
+        click(&mut editor, &ctx, last);
+        assert_eq!(editor.doc.selected, [4071].into());
+        editor.inspector.query = "no matching object".into();
+        let output = frame(&mut editor, &ctx, vec![]);
+        text_center(&output, "No matching objects on this page.");
     }
 }

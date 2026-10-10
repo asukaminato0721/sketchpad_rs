@@ -32,21 +32,31 @@ undo steps. The existing text and label controls remain below the tree.
 `editor/inspector.rs` uses a tagless-final display algebra, `DependencyView`.
 The generic traversal calls `object` and `notice`. Each object operation receives
 a branch continuation. The interpreter decides whether to run that continuation.
-The traversal does not construct a tagged UI tree. `EguiDependencyView` renders
-the controls and records selection intents. The test interpreter records paths
-and can skip collapsed branches without starting egui.
+The traversal does not construct a tagged UI tree. `RowCountView` counts expanded
+rows and locates the selected root. `EguiDependencyView` creates controls only for
+the visible row range and records selection intents. Both use the same expansion
+state and traversal limits. Rows have a fixed height and do not wrap.
+The test interpreter records paths and can skip collapsed branches without egui.
 
 The graph uses `Document::dependencies_of`, including native midpoint hosts.
 Reverse edges supply the **Used by** view. A branch stops at a cycle, 24 levels,
 or 256 visited entries. Deleted objects are omitted. Missing references produce
 a notice. Select an object in a truncated branch, then choose **Show selected**
 to inspect its root separately.
-The graph is rebuilt from current document state when the inspector renders, so
-construction, edits, deletion, undo, and redo appear without a separate cache.
+The inspector caches the graph with the shared evaluated document snapshot.
+It rebuilds the graph when that snapshot changes. Construction, edits, deletion,
+undo, redo, and page changes therefore update the list. Visibility checks use
+the snapshot's cached values, including values that control dynamic colors.
 Object type labels use the stored geometry class. They do not evaluate source
 coordinates. This also preserves type labels when source geometry is undefined.
 Evaluating geometry for each label previously blocked the inspector on large
 documents, including the 38-page physics teaching sample with 7,752 objects.
+
+The excavator sample has 4,071 objects and 52 dynamic color objects.
+Before graph caching and row virtualization, release inspector frames took
+154 ms initially and 90–94 ms afterward on the local Linux test machine.
+After these changes, the same test took 9.8 ms initially and about 1 ms afterward.
+These measurements cover the inspector UI, without canvas rendering or GPU work.
 
 ## Action button input
 
