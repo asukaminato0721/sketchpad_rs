@@ -1,0 +1,149 @@
+name: Rolling release
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rolling-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxi-dev libxrandr-dev libgl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build application and command-line tool
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin sketchpad_rs --bin gsp_probe
+      - name: Test libraries
+        if: runner.os == 'Linux'
+        run: cargo test --locked --workspace --lib
+      - name: Check the command-line tool
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          suffix=''
+          if [[ "$RUNNER_OS" == 'Windows' ]]; then suffix='.exe'; fi
+          probe="target/$TARGET/release/gsp_probe$suffix"
+          "$probe" demo ci-demo.gsp
+          "$probe" verify ci-demo.gsp
+      - name: Package release
+        run: python dev/package_release.py --target ${{ matrix.target }} --commit ${{ github.sha }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    name: Update rolling prerelease
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish archives and checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head_sha=$(gh api "repos/$GH_REPO/git/ref/heads/master" --jq '.object.sha')
+          if [[ "$head_sha" != "$BUILD_SHA" ]]; then
+            echo 'Skip release: master has a newer commit.'
+            exit 0
+          fi
+
+          cd dist
+          archives=(
+            sketchpad-rs-x86_64-unknown-linux-gnu.tar.gz
+            sketchpad-rs-x86_64-pc-windows-msvc.zip
+            sketchpad-rs-x86_64-apple-darwin.tar.gz
+            sketchpad-rs-aarch64-apple-darwin.tar.gz
+          )
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Automatic build from master at commit $BUILD_SHA.
+
+          Download the archive for your operating system and CPU.
+          Each archive contains the editor, gsp_probe, README, and build details.
+          macOS archives contain Sketchpad RS.app. These builds are unsigned.
+          Linux builds require glibc 2.39 or newer and system graphics/audio libraries.
+          See README for font requirements and optional external tools.
+          Verify downloads with SHA256SUMS. This prerelease changes with each successful master build.
+
+          Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+
+          if gh api "repos/$GH_REPO/git/ref/tags/rolling" > /dev/null 2>&1; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/rolling" \
+              -f sha="$BUILD_SHA" -F force=true
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref=refs/tags/rolling -f sha="$BUILD_SHA"
+          fi
+
+          if gh release view rolling > /dev/null 2>&1; then
+            gh release upload rolling "${archives[@]}" SHA256SUMS --clobber
+            gh release edit rolling --title 'Rolling Release' --prerelease --latest=false \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create rolling "${archives[@]}" SHA256SUMS --verify-tag \
+              --title 'Rolling Release' --prerelease --latest=false \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

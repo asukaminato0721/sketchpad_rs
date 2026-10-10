@@ -2,6 +2,27 @@
 
 Experimental Linux editor for Sketchpad 5 `.gsp` documents. It uses winit and egui for the window and controls, and wgpu with a WGSL shader for sketch geometry.
 
+## Rolling builds
+
+Download builds from the [Rolling Release](https://github.com/asukaminato0721/sketchpad_rs/releases/tag/rolling).
+The workflow builds Windows x64, Linux x64, macOS Intel, and macOS Apple Silicon.
+Each archive contains the editor, the `gsp_probe` command-line tool, this README,
+and `BUILD-INFO.json` with the source commit. `SHA256SUMS` contains the archive checksums.
+
+Extract the archive before use. Start `sketchpad_rs.exe` on Windows,
+`sketchpad_rs` on Linux, or `Sketchpad RS.app` on macOS.
+The macOS builds are unsigned and are not notarized.
+Linux builds target Ubuntu 24.04 and require glibc 2.39 or newer.
+Linux also needs system graphics libraries, ALSA, and an X11 or Wayland session.
+Install fontconfig and CJK fonts for Chinese text. See the font requirements below.
+Windows and macOS builds are experimental. Linux remains the main development platform.
+
+Each push to `master` builds all four packages. The workflow updates the `rolling`
+tag and prerelease only after all builds and checks pass. Pull requests build
+downloadable Actions artifacts without publishing a release. To run the workflow
+manually, select **Actions → Rolling release → Run workflow** on `master`.
+The workflow uses `GITHUB_TOKEN`. It does not need a separate release secret.
+
 ## CJK text
 
 Chinese (simplified and traditional), Japanese, and Korean text use system font
