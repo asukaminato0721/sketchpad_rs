@@ -33,6 +33,24 @@ Previous logs remain available after a successful restart. You can remove old lo
 A native driver crash or forced termination can leave only the last recorded stage,
 without a Rust backtrace. An absent normal-exit record alone does not identify the cause.
 
+Windows uses DirectX 12 by default. Two Intel GPU reports stopped during Vulkan
+device creation without a Rust error. This default avoids that startup path.
+The logs do not establish the driver failure cause. Other platforms keep automatic
+backend selection. `WGPU_BACKEND` overrides the default on all platforms.
+
+For an older Windows build, open PowerShell in the extracted application directory
+and select DirectX 12 for that session:
+
+```powershell
+$env:WGPU_BACKEND = "dx12"
+.\sketchpad_rs.exe
+```
+
+If DirectX 12 also fails, set the value to `gl` and start the application again.
+Send the new log with the report. These commands do not change system settings.
+To restore the default in the current PowerShell session, run
+`Remove-Item Env:WGPU_BACKEND`.
+
 Each push to `master` builds all four packages. The workflow updates the `rolling`
 tag and prerelease only after all builds and checks pass. Pull requests build
 downloadable Actions artifacts without publishing a release. To run the workflow

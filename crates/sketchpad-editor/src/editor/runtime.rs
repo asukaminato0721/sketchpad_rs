@@ -48,12 +48,16 @@ impl GraphicsState {
         // Give GLES the compositor connection up front.  Creating the default
         // instance without it can leave Vulkan as the only active backend on
         // software/Xvfb displays, even though a working GL adapter is present.
-        // `with_env` also makes WGPU_BACKEND useful for deterministic demos and
-        // troubleshooting without changing normal backend selection.
-        let descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+        let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
             event_loop.owned_display_handle(),
-        ))
-        .with_env();
+        ));
+        // Intel Windows reports stopped inside Vulkan device creation, without
+        // a Rust panic. Avoid that path by default. Apply environment settings
+        // afterward so users can still select Vulkan or GL for diagnostics.
+        if cfg!(windows) {
+            descriptor.backends = wgpu::Backends::DX12;
+        }
+        let descriptor = descriptor.with_env();
         log::info!(
             "Startup: create graphics instance; backends={:?}; flags={:?}",
             descriptor.backends,
@@ -70,9 +74,11 @@ impl GraphicsState {
         .expect("graphics adapter");
         log::info!("Graphics adapter: {:?}", adapter.get_info());
         log::info!("Startup: request graphics device");
+        log::logger().flush();
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .expect("graphics device");
+        log::info!("Startup: graphics device created");
         device.set_device_lost_callback(|reason, message| {
             log::warn!("Graphics device lost: {reason:?}; {message}");
             log::logger().flush();
