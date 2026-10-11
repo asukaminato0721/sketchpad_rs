@@ -18,6 +18,22 @@ The inspector lists the current page's objects, including hidden objects.
 Each row shows the original ID, type, and label. The filter accepts an ID,
 a type, or label text.
 
+**Group by custom tools** is enabled by default. Complete structural matches
+appear as `Tool name (input objects)`. Expand a group to inspect the inputs and
+all internal objects. Point selection on the canvas opens the corresponding
+group and reveals the selected member. The filter searches tool names and group
+members. Disable grouping to restore individual object roots.
+
+The engine compares each embedded prototype with the active page's construction
+graph. It checks input categories, ordered dependencies, and full remapped kinds,
+including fixed parameters. Native midpoint hosts are normalized in both graphs.
+The search accepts complete matches and assigns each output to at most one group.
+Larger tools take priority, followed by file order. Inputs can be shared.
+This recognizes equivalent structure. It does not recover invocation history.
+Unknown prototypes and incomplete matches remain ungrouped. Limits of 128 tools,
+256 prototype objects, and 200,000 binding attempts bound each search. The panel
+reports search limits. Recognition does not modify document state.
+
 Choose **Depends on** to expand source objects. Choose **Used by** to expand
 objects that depend on the row's object. Shared dependencies can appear in
 several branches. All occurrences refer to the same document object.
@@ -30,7 +46,7 @@ filter and scrolls to the selected root. Selection and navigation do not create
 undo steps. The existing text and label controls remain below the tree.
 
 `editor/inspector.rs` uses a tagless-final display algebra, `DependencyView`.
-The generic traversal calls `object` and `notice`. Each object operation receives
+The generic traversal calls `object`, `tool_group`, and `notice`. Each branch operation receives
 a branch continuation. The interpreter decides whether to run that continuation.
 The traversal does not construct a tagged UI tree. `RowCountView` counts expanded
 rows and locates the selected root. `EguiDependencyView` creates controls only for

@@ -198,6 +198,16 @@ selected object's text or label. The panel includes an expandable dependency tre
 with source and dependent views. Click a tree row to select its original object
 on the canvas. Double-click to center supported geometry. The Text tool opens
 this panel automatically.
+The tree groups constructions that match the document's embedded custom tools.
+Each group shows the tool name and its input objects in binding order. Expand
+the group to inspect its inputs and internal objects, including hidden objects.
+Canvas selection opens the matching group. Filters also search group members.
+Clear **Group by custom tools** to show every object as a separate root.
+Recognition compares construction types, dependencies, and fixed parameters.
+It identifies matching structure, not the original tool invocation history.
+Larger matching tools take priority when constructions overlap. Unsupported,
+incomplete, or search-limited matches remain separate. Recognition does not
+change the drawing or the saved file.
 The arrow button below the Text tool opens Custom Tools. Multi-page documents
 show page tabs below the canvas. This is a layout approximation, not complete
 Sketchpad 5 UI parity.

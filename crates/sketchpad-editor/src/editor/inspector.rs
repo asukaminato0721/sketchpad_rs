@@ -1,7 +1,9 @@
 //! The traversal is a tagless-final program over `DependencyView`. It does not
 //! build a UI tree. Each interpreter decides whether to evaluate a branch body.
 use super::{Editor, Tool, i18n::tr};
-use sketchpad_engine::document::{Document, EvaluatedDocument, Kind, Point};
+use sketchpad_engine::document::{
+    Document, EvaluatedDocument, Kind, Point, ToolMatch, ToolMatches,
+};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -13,6 +15,7 @@ use std::{
 pub(super) struct InspectorState {
     query: String,
     dependents: bool,
+    ungrouped: bool,
     selection: Vec<usize>,
     graph: Option<(Arc<EvaluatedDocument>, Arc<DependencyGraph>)>,
     expanded: HashSet<egui::Id>,
@@ -62,6 +65,7 @@ impl ObjectNode {
 
 struct DependencyGraph {
     nodes: BTreeMap<usize, ObjectNode>,
+    tools: ToolMatches,
 }
 
 impl DependencyGraph {
@@ -126,13 +130,36 @@ impl DependencyGraph {
                 node.children.push(child);
             }
         }
-        Self { nodes }
+        Self {
+            nodes,
+            tools: doc.matching_tool_constructions(),
+        }
+    }
+
+    fn tool_title(&self, group: &ToolMatch) -> String {
+        let inputs = group
+            .inputs
+            .iter()
+            .map(|id| match self.nodes.get(id) {
+                Some(node) if !node.name.is_empty() => format!("{} · #{id}", node.name),
+                _ => format!("#{id}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{} ({inputs})", group.name)
     }
 }
 
 /// The display algebra. A backend can render, record, or skip the branch body.
 /// The generic traversal works without egui or a tagged UI representation.
 trait DependencyView: Sized {
+    fn tool_group(
+        &mut self,
+        index: usize,
+        group: &ToolMatch,
+        title: &str,
+        body: impl FnOnce(&mut Self),
+    );
     fn object(
         &mut self,
         node: &ObjectNode,
@@ -141,6 +168,90 @@ trait DependencyView: Sized {
         body: impl FnOnce(&mut Self),
     );
     fn notice(&mut self, message: &str);
+}
+
+#[derive(Clone, Copy)]
+enum InspectorRoot {
+    Object(usize),
+    Tool(usize),
+}
+
+fn inspector_roots(
+    graph: &DependencyGraph,
+    page: usize,
+    grouped: bool,
+    query: &str,
+) -> Vec<InspectorRoot> {
+    let matches = |id: &usize| {
+        graph.nodes.get(id).is_some_and(|node| {
+            query.is_empty()
+                || node.title().to_lowercase().contains(query)
+                || node.kind.to_lowercase().contains(query)
+        })
+    };
+    let owners: BTreeMap<_, _> = if grouped {
+        graph
+            .tools
+            .groups
+            .iter()
+            .enumerate()
+            .flat_map(|(index, group)| group.objects.iter().map(move |id| (*id, index)))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    graph
+        .nodes
+        .values()
+        .filter(|node| node.page == page)
+        .filter_map(|node| {
+            if let Some(&index) = owners.get(&node.id) {
+                let group = &graph.tools.groups[index];
+                (node.id == group.objects[0]
+                    && (graph.tool_title(group).to_lowercase().contains(query)
+                        || group.objects.iter().chain(&group.inputs).any(matches)))
+                .then_some(InspectorRoot::Tool(index))
+            } else {
+                matches(&node.id).then_some(InspectorRoot::Object(node.id))
+            }
+        })
+        .collect()
+}
+
+fn inspector_outline<V: DependencyView>(
+    graph: &DependencyGraph,
+    roots: &[InspectorRoot],
+    dependents: bool,
+    view: &mut V,
+) {
+    for root in roots {
+        match *root {
+            InspectorRoot::Object(id) => {
+                dependency_branch(graph, id, dependents, &mut vec![], &mut 256, view)
+            }
+            InspectorRoot::Tool(index) => {
+                let group = &graph.tools.groups[index];
+                view.tool_group(index, group, &graph.tool_title(group), |view| {
+                    // The synthetic path component separates grouped rows from
+                    // ordinary roots without changing any document object ID.
+                    let mut seen = BTreeSet::new();
+                    for &id in group.inputs.iter().chain(&group.objects) {
+                        if !seen.insert(id) {
+                            continue;
+                        }
+                        dependency_branch(
+                            graph,
+                            id,
+                            dependents,
+                            &mut vec![usize::MAX - index],
+                            &mut 256,
+                            view,
+                        );
+                    }
+                });
+            }
+        }
+    }
 }
 
 fn dependency_branch<V: DependencyView>(
@@ -214,6 +325,25 @@ struct RowCountView<'a> {
 }
 
 impl DependencyView for RowCountView<'_> {
+    fn tool_group(
+        &mut self,
+        index: usize,
+        group: &ToolMatch,
+        _title: &str,
+        body: impl FnOnce(&mut Self),
+    ) {
+        if self.reveal.is_some_and(|id| group.objects.contains(&id)) {
+            self.reveal_row = Some(self.rows);
+        }
+        self.rows += 1;
+        if self
+            .expanded
+            .contains(&self.namespace.with(("tool", index)))
+        {
+            body(self);
+        }
+    }
+
     fn object(
         &mut self,
         node: &ObjectNode,
@@ -221,7 +351,9 @@ impl DependencyView for RowCountView<'_> {
         expandable: bool,
         body: impl FnOnce(&mut Self),
     ) {
-        if path.len() == 1 && self.reveal == Some(node.id) {
+        if self.reveal == Some(node.id)
+            && (path.len() == 1 || (path.len() == 2 && path[0] > usize::MAX / 2))
+        {
             self.reveal_row = Some(self.rows);
         }
         self.rows += 1;
@@ -265,6 +397,40 @@ impl EguiDependencyView<'_> {
 }
 
 impl DependencyView for EguiDependencyView<'_> {
+    fn tool_group(
+        &mut self,
+        index: usize,
+        group: &ToolMatch,
+        title: &str,
+        body: impl FnOnce(&mut Self),
+    ) {
+        let id = self.namespace.with(("tool", index));
+        let open = self.expanded.contains(&id);
+        if self.visible.contains(&self.row_index) {
+            self.ui.push_id(id, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(self.row_height);
+                    let (_, arrow) = ui.allocate_exact_size(
+                        egui::vec2(ui.spacing().indent, self.row_height), egui::Sense::click(),
+                    );
+                    egui::collapsing_header::paint_default_icon(ui, f32::from(open), &arrow);
+                    let label = ui.selectable_label(
+                        group.objects.iter().any(|id| self.selected.contains(id)), title,
+                    ).on_hover_text(tr("This construction matches a custom tool. Expand to inspect its inputs and internal objects."));
+                    if arrow.clicked() || label.clicked() {
+                        self.toggle.set(Some(id));
+                        ui.ctx().request_repaint();
+                    }
+                    ui.weak(tr(format!("{} internal objects", group.objects.len())));
+                });
+            });
+        }
+        self.row_index += 1;
+        if open {
+            body(self);
+        }
+    }
+
     fn object(
         &mut self,
         node: &ObjectNode,
@@ -324,6 +490,20 @@ impl Editor {
             .flatten();
         self.inspector.selection = selection;
         ui.heading(tr("Dependency tree"));
+        let mut grouped = !self.inspector.ungrouped;
+        ui.checkbox(&mut grouped, tr("Group by custom tools"));
+        self.inspector.ungrouped = !grouped;
+        if grouped && !graph.tools.groups.is_empty() {
+            ui.small(tr(format!(
+                "{} matching tool constructions",
+                graph.tools.groups.len()
+            )));
+        }
+        if grouped && graph.tools.limited {
+            ui.small(tr(
+                "Search limit reached. Some constructions remain ungrouped.",
+            ));
+        }
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.inspector.dependents, false, tr("Depends on"));
             ui.selectable_value(&mut self.inspector.dependents, true, tr("Used by"));
@@ -351,37 +531,39 @@ impl Editor {
             .filter(|node| node.page == self.doc.active_page)
             .collect();
         ui.small(tr(format!("{} objects on this page", page_nodes.len())));
-        let roots: Vec<_> = page_nodes
-            .iter()
-            .filter(|node| {
-                query.is_empty()
-                    || node.title().to_lowercase().contains(&query)
-                    || node.kind.to_lowercase().contains(&query)
-            })
-            .map(|node| node.id)
-            .collect();
+        let roots = inspector_roots(&graph, self.doc.active_page, grouped, &query);
         let namespace = ui.make_persistent_id((
             "dependency_tree",
             self.doc.active_page,
             self.inspector.dependents,
+            grouped,
         ));
+        if grouped {
+            for (index, group) in graph.tools.groups.iter().enumerate() {
+                if reveal.is_some_and(|id| group.objects.contains(&id)) {
+                    self.inspector
+                        .expanded
+                        .insert(namespace.with(("tool", index)));
+                }
+            }
+        }
+        // Filtering exposes matching members inside their group.
+        let mut expanded = self.inspector.expanded.clone();
+        if !query.is_empty() {
+            for root in &roots {
+                if let InspectorRoot::Tool(index) = root {
+                    expanded.insert(namespace.with(("tool", *index)));
+                }
+            }
+        }
         let mut count = RowCountView {
-            expanded: &self.inspector.expanded,
+            expanded: &expanded,
             namespace,
             rows: 0,
             reveal,
             reveal_row: None,
         };
-        for &root in &roots {
-            dependency_branch(
-                &graph,
-                root,
-                self.inspector.dependents,
-                &mut Vec::new(),
-                &mut 256,
-                &mut count,
-            );
-        }
+        inspector_outline(&graph, &roots, self.inspector.dependents, &mut count);
         let pick = Cell::new(None);
         let toggle = Cell::new(None);
         let row_height = (ui.text_style_height(&egui::TextStyle::Body)
@@ -404,7 +586,7 @@ impl Editor {
                 selected: &self.doc.selected,
                 pick: &pick,
                 active_page: self.doc.active_page,
-                expanded: &self.inspector.expanded,
+                expanded: &expanded,
                 namespace,
                 toggle: &toggle,
                 visible,
@@ -412,17 +594,7 @@ impl Editor {
                 row_height,
                 depth: 0,
             };
-            for &root in &roots {
-                // Each root remains accessible even if another branch reaches its limit.
-                dependency_branch(
-                    &graph,
-                    root,
-                    self.inspector.dependents,
-                    &mut Vec::new(),
-                    &mut 256,
-                    &mut view,
-                );
-            }
+            inspector_outline(&graph, &roots, self.inspector.dependents, &mut view);
             if roots.is_empty() {
                 view.notice("No matching objects on this page.");
             }
@@ -564,6 +736,16 @@ mod tests {
         collapsed: BTreeSet<usize>,
     }
     impl DependencyView for Outline {
+        fn tool_group(
+            &mut self,
+            _index: usize,
+            _group: &ToolMatch,
+            _title: &str,
+            body: impl FnOnce(&mut Self),
+        ) {
+            body(self);
+        }
+
         fn object(
             &mut self,
             node: &ObjectNode,
@@ -587,6 +769,98 @@ mod tests {
         doc.add(Kind::Free(Point { x: 200., y: 100. }));
         doc.add(Kind::Segment(1, 2));
         Editor::new(Document::from_bytes(&doc.encode().unwrap(), None).unwrap())
+    }
+
+    fn tool_editor() -> Editor {
+        let mut editor = editor();
+        editor.doc.add(Kind::Midpoint(1, 2));
+        editor.doc.selected = [1, 2, 3, 4].into();
+        editor
+            .doc
+            .create_embedded_tool("Segment and midpoint")
+            .unwrap();
+        editor.doc.selected.clear();
+        editor
+    }
+
+    #[test]
+    fn grouped_roots_keep_inputs_and_all_internal_objects_accessible() {
+        let editor = tool_editor();
+        let graph = DependencyGraph::new(&editor.doc);
+        assert_eq!(graph.tools.groups.len(), 1);
+        let roots = inspector_roots(&graph, 0, true, "");
+        assert_eq!(roots.len(), 3);
+        let mut outline = Outline::default();
+        inspector_outline(&graph, &roots, false, &mut outline);
+        for id in 1..=4 {
+            assert!(outline.paths.contains(&vec![usize::MAX, id]));
+        }
+        assert!(!outline.paths.contains(&vec![3]));
+        assert!(!outline.paths.contains(&vec![4]));
+        assert_eq!(inspector_roots(&graph, 0, false, "").len(), 4);
+        assert!(matches!(
+            inspector_roots(&graph, 0, true, "#4").as_slice(),
+            [InspectorRoot::Tool(0)]
+        ));
+        assert!(matches!(
+            inspector_roots(&graph, 0, true, "segment and midpoint").as_slice(),
+            [InspectorRoot::Tool(0)]
+        ));
+    }
+
+    #[test]
+    fn egui_groups_expand_select_filter_and_reveal_without_document_edits() {
+        let mut editor = tool_editor();
+        let before = editor.doc.encode().unwrap();
+        let history = editor.doc.undo.len();
+        let ctx = egui::Context::default();
+        let graph = DependencyGraph::new(&editor.doc);
+        let title = graph.tool_title(&graph.tools.groups[0]);
+        let object_title = graph.nodes[&4].title();
+        let mut output = frame(&mut editor, &ctx, vec![]);
+        let group_row = text_center(&output, &title);
+        assert!(!has_text(&output, &object_title));
+        output = click(&mut editor, &ctx, group_row);
+        let member = text_center(&output, &object_title);
+        click(&mut editor, &ctx, member);
+        assert_eq!(editor.doc.selected, [4].into());
+        assert_eq!(editor.selection_order, [4]);
+
+        // A canvas selection opens a collapsed group and reveals the member.
+        editor.doc.selected.clear();
+        frame(&mut editor, &ctx, vec![]);
+        editor.inspector.expanded.clear();
+        editor.select_only(4);
+        output = frame(&mut editor, &ctx, vec![]);
+        text_center(&output, &object_title);
+        assert!(!editor.inspector.expanded.is_empty());
+
+        editor.doc.selected.clear();
+        editor.inspector.expanded.clear();
+        editor.inspector.query = "#4".into();
+        output = frame(&mut editor, &ctx, vec![]);
+        text_center(&output, &title);
+        text_center(&output, &object_title);
+
+        editor.inspector.query.clear();
+        editor.inspector.ungrouped = true;
+        output = frame(&mut editor, &ctx, vec![]);
+        assert!(!has_text(&output, &title));
+        text_center(&output, &object_title);
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        assert_eq!(editor.doc.undo.len(), history);
+
+        editor.language = super::super::i18n::Language::Chinese;
+        output = frame(&mut editor, &ctx, vec![]);
+        text_center(&output, "按自定义工具分组");
+        super::super::i18n::Language::English.activate();
+    }
+
+    fn has_text(output: &FullOutput, label: &str) -> bool {
+        output.shapes.iter().any(|shape| {
+            matches!(&shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.text() == label)
+        })
     }
 
     #[test]

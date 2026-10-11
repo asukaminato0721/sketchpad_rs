@@ -558,5 +558,10 @@
   "Action Button": "操作按钮",
   "Coordinate System": "坐标系",
   "Iteration Image": "迭代像",
-  "Object": "对象"
+  "Object": "对象",
+  "Group by custom tools": "按自定义工具分组",
+  "{} matching tool constructions": "匹配到 {} 个工具构造",
+  "{} internal objects": "{} 个内部对象",
+  "Search limit reached. Some constructions remain ungrouped.": "已达到搜索上限。部分构造未分组。",
+  "This construction matches a custom tool. Expand to inspect its inputs and internal objects.": "此构造与自定义工具匹配。展开可查看输入对象和内部对象。"
 }

@@ -70,6 +70,7 @@ mod tables;
 mod text;
 mod tool_creation;
 mod tool_inputs;
+mod tool_matching;
 mod transform_decode;
 pub mod transform_evaluator;
 pub mod transform_model;
@@ -106,6 +107,7 @@ pub use custom_transform_metadata::CustomTransformDefinition;
 pub use embedded_tools::EmbeddedToolSummary;
 pub use records::{Record, records};
 pub use tool_inputs::{EmbeddedToolInput, EmbeddedToolInputKind};
+pub use tool_matching::{ToolMatch, ToolMatches};
 
 pub use sketchpad_ir::{DependencyIndex, LineMode, ObjectNode, Point};
 
