@@ -15,8 +15,13 @@ editing, text-range formatting, and iteration controls from the former sidebar.
 
 Open **Window → Object Information** or click the `i` button in the tool strip.
 The inspector lists the current page's objects, including hidden objects.
-Each row shows the original ID, type, and label. The filter accepts an ID,
-a type, or label text.
+Each row shows the original ID, type, label, and construction definition.
+Calculations show their expressions with source names or object IDs.
+Geometry descriptions identify the operands, such as the point and line used
+to construct a perpendicular. Long rows show a shortened definition. Hover over
+or select a row to read the full definition. The filter also searches definitions.
+Descriptions use stored definitions. They do not evaluate geometry or recursively
+expand source formulas. Imported calculation sources use global object IDs.
 
 **Group by custom tools** is enabled by default. Complete structural matches
 appear as `Tool name (input objects)`. Expand a group to inspect the inputs and

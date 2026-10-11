@@ -17,6 +17,7 @@ pub(crate) mod fonts;
 mod function_dialogs;
 mod i18n;
 mod inspector;
+mod inspector_description;
 mod mcp;
 mod measurements;
 mod menu;

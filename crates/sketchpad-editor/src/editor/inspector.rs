@@ -1,5 +1,6 @@
 //! The traversal is a tagless-final program over `DependencyView`. It does not
 //! build a UI tree. Each interpreter decides whether to evaluate a branch body.
+use super::inspector_description::{self, Definition};
 use super::{Editor, Tool, i18n::tr};
 use sketchpad_engine::document::{
     Document, EvaluatedDocument, Kind, Point, ToolMatch, ToolMatches,
@@ -41,6 +42,7 @@ struct ObjectNode {
     page: usize,
     kind: &'static str,
     name: String,
+    definition: Definition,
     hidden: bool,
     parents: Vec<usize>,
     children: Vec<usize>,
@@ -48,11 +50,26 @@ struct ObjectNode {
 
 impl ObjectNode {
     fn title(&self) -> String {
-        if self.name.is_empty() {
+        let mut title = if self.name.is_empty() {
             format!("#{} · {}", self.id, tr(self.kind))
         } else {
             format!("#{} · {} · {}", self.id, tr(self.kind), self.name)
+        };
+        let definition = self.definition.text();
+        if !definition.is_empty() {
+            title.push_str(" · ");
+            title.push_str(&definition);
         }
+        title
+    }
+    fn row_title(&self) -> String {
+        let title = self.title();
+        let mut chars = title.chars();
+        let mut short: String = chars.by_ref().take(160).collect();
+        if chars.next().is_some() {
+            short.push('…');
+        }
+        short
     }
     fn edges(&self, dependents: bool) -> &[usize] {
         if dependents {
@@ -114,6 +131,7 @@ impl DependencyGraph {
                     page: object.page,
                     kind,
                     name,
+                    definition: inspector_description::definition(doc, object),
                     hidden: !object.visible
                         || (object.page == doc.active_page && !doc.is_displayed(object.id)),
                     parents,
@@ -376,9 +394,11 @@ impl EguiDependencyView<'_> {
         active_page: usize,
     ) {
         let response = ui
-            .selectable_label(selected.contains(&node.id), node.title())
-            .on_hover_text(tr(
-                "Click to select. Ctrl/Shift-click to add or remove. Double-click to center.",
+            .selectable_label(selected.contains(&node.id), node.row_title())
+            .on_hover_text(format!(
+                "{}\n\n{}",
+                node.title(),
+                tr("Click to select. Ctrl/Shift-click to add or remove. Double-click to center.",)
             ));
         if response.clicked() || response.double_clicked() {
             pick.set(Some(Pick {
@@ -769,6 +789,55 @@ mod tests {
         doc.add(Kind::Free(Point { x: 200., y: 100. }));
         doc.add(Kind::Segment(1, 2));
         Editor::new(Document::from_bytes(&doc.encode().unwrap(), None).unwrap())
+    }
+
+    #[test]
+    fn formula_rows_support_selection_search_and_cached_language_changes() {
+        let mut editor = editor();
+        editor.doc.set_point_label(1, "A", true).unwrap();
+        editor.doc.set_point_label(2, "B", true).unwrap();
+        let line = editor.doc.add(Kind::Perpendicular(1, 3));
+        let calculation = editor
+            .doc
+            .add_calculation_expression("sqrt(2)+3", (10, 10))
+            .unwrap();
+        let before = editor.doc.encode().unwrap();
+        let ctx = egui::Context::default();
+        let mut output = frame(&mut editor, &ctx, vec![]);
+        let graph = editor.inspector.graph.as_ref().unwrap().1.clone();
+        let title = graph.nodes[&calculation].title();
+        assert!(title.contains("sqrt(2)"));
+        let pos = text_center(&output, &title);
+        output = click(&mut editor, &ctx, pos);
+        assert_eq!(editor.doc.selected, [calculation].into());
+        text_center(&output, &title);
+
+        editor.inspector.query = "sqrt".into();
+        output = frame(&mut editor, &ctx, vec![]);
+        text_center(&output, &title);
+        assert_eq!(inspector_roots(&graph, 0, false, "sqrt").len(), 1);
+        editor.inspector.query.clear();
+        editor.language = super::super::i18n::Language::Chinese;
+        output = frame(&mut editor, &ctx, vec![]);
+        let title = graph.nodes[&line].title();
+        assert!(title.contains("过 A [#1]，垂直于 #3"));
+        text_center(&output, &title);
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        super::super::i18n::Language::English.activate();
+    }
+
+    #[test]
+    fn long_definitions_keep_full_search_text_with_short_single_line_rows() {
+        let mut doc = Document::new();
+        doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let id = doc.add(Kind::Polygon((1..=80).collect()));
+        let graph = DependencyGraph::new(&doc);
+        let node = &graph.nodes[&id];
+        assert_eq!(node.row_title().chars().count(), 161);
+        assert!(node.row_title().ends_with('…'));
+        assert!(node.title().ends_with("#80"));
+        assert!(!node.row_title().contains("#80"));
+        assert_eq!(inspector_roots(&graph, 0, false, "#80").len(), 1);
     }
 
     fn tool_editor() -> Editor {
