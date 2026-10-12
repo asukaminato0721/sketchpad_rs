@@ -24,20 +24,20 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
         e.marked_vector = Some((1, 2));
         e.translation_mode = TranslationMode::MarkedVector;
         e.translate_selected();
-        let vector = e.doc.objects.len();
+        let vector = e.doc.objects().len();
         e.marked_mirror = Some(mirror);
         e.reflect_selected();
-        let reflected = e.doc.objects.len();
+        let reflected = e.doc.objects().len();
         e.translation_mode = TranslationMode::FixedPolar;
         e.translation_angle = 90.;
         e.translation_distance = 1.;
         e.translate_selected();
-        let polar = e.doc.objects.len();
+        let polar = e.doc.objects().len();
         e.marked_center = Some(4);
         e.rotation_angle = 90.;
         e.rotation_use_marked = false;
         e.rotate_selected();
-        let rotated = e.doc.objects.len();
+        let rotated = e.doc.objects().len();
         let y = 100. - 37.79527559055118;
         for (id, flavor, start, end) in [
             (
@@ -65,7 +65,7 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
                 Point { x: y, y: 220. },
             ),
         ] {
-            let def = e.doc.objects[id - 1].kind.transform_definition().unwrap();
+            let def = e.doc.objects()[id - 1].kind.transform_definition().unwrap();
             assert_eq!(
                 def.element(),
                 if ray {
@@ -106,7 +106,7 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
     let frame = d
         .add_default_coordinate_system(Point { x: 100., y: 100. })
         .unwrap();
-    let Kind::CoordinateSystem(x_axis, _) = d.objects[frame - 1].kind else {
+    let Kind::CoordinateSystem(x_axis, _) = d.objects()[frame - 1].kind else {
         panic!("Expected coordinate system");
     };
     let center = d.add(Kind::Free(Point { x: 100., y: 100. }));
@@ -117,17 +117,17 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
     e.rotation_use_marked = false;
     e.rotation_angle = 90.;
     e.rotate_selected();
-    let fixed = e.doc.objects.len();
+    let fixed = e.doc.objects().len();
     e.select_only(x_axis);
     e.rotation_use_marked = true;
     e.marked_angle = Some(MarkedAngle::Value(angle));
     e.rotate_selected();
-    let numeric = e.doc.objects.len();
+    let numeric = e.doc.objects().len();
     for (id, flavor) in [
         (fixed, NativeTransformFlavor::FixedRotation),
         (numeric, NativeTransformFlavor::NumericRotation),
     ] {
-        let definition = e.doc.objects[id - 1].kind.transform_definition().unwrap();
+        let definition = e.doc.objects()[id - 1].kind.transform_definition().unwrap();
         assert_eq!(definition.element(), ElementType::Line);
         assert_eq!(definition.source(), x_axis);
         assert_eq!(definition.wire_flavor(), flavor);
@@ -156,5 +156,5 @@ fn straight_translation_commands_keep_unproved_modes_closed_without_partial_edit
     let before = e.doc.encode().unwrap();
     e.translate_selected();
     assert_eq!(e.doc.encode().unwrap(), before);
-    assert_eq!(e.doc.objects.len(), 3);
+    assert_eq!(e.doc.objects().len(), 3);
 }

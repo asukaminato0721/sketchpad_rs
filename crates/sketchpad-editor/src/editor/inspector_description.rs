@@ -39,7 +39,9 @@ pub(super) fn single_line(text: &str) -> String {
 }
 
 fn source_name(doc: &Document, id: usize) -> Option<String> {
-    let object = id.checked_sub(1).and_then(|index| doc.objects.get(index))?;
+    let object = id
+        .checked_sub(1)
+        .and_then(|index| doc.objects().get(index))?;
     if object.deleted {
         return None;
     }
@@ -280,7 +282,7 @@ mod tests {
     };
 
     fn text(doc: &Document, id: usize) -> String {
-        definition(doc, &doc.objects[id - 1]).text()
+        definition(doc, &doc.objects()[id - 1]).text()
     }
 
     #[test]
@@ -328,7 +330,7 @@ mod tests {
         .unwrap();
         let calculation = doc.add(Kind::ParameterCalculation(3, group));
         for id in 3..=calculation {
-            doc.objects.edit(id - 1).page = 1;
+            doc.edit_object(id, |object| object.page = 1).unwrap();
         }
         assert_eq!(text(&doc, calculation), "(a − b)");
     }
@@ -340,7 +342,7 @@ mod tests {
         doc.add(Kind::Free(Point { x: 0., y: 0. }));
         doc.set_point_label(1, "Point{}", true).unwrap();
         let perpendicular = doc.add(Kind::Perpendicular(1, 900));
-        let definition = definition(&doc, &doc.objects[perpendicular - 1]);
+        let definition = definition(&doc, &doc.objects()[perpendicular - 1]);
         assert_eq!(
             definition.text(),
             "Through Point{} [#1], perpendicular to #900"
@@ -385,7 +387,7 @@ mod tests {
             last = next;
         }
         assert_eq!(text(&doc, last), "(#99 + #100)");
-        doc.objects.edit(98).deleted = true;
+        doc.edit_object(99, |object| object.deleted = true).unwrap();
         assert_eq!(text(&doc, last), "(#99 + #100)");
     }
 }

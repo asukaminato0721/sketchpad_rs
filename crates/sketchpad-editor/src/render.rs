@@ -88,7 +88,7 @@ fn curve_screen_paths(vp: &Viewport, segments: &[(Point, Point, LineMode)]) -> V
 }
 
 fn plot_arrow_segments(doc: &Document, vp: &Viewport, id: usize) -> Vec<(Pos2, Pos2)> {
-    let Some(object) = doc.objects.get(id.saturating_sub(1)) else {
+    let Some(object) = doc.objects().get(id.saturating_sub(1)) else {
         return Vec::new();
     };
     let Some(presentation) = object.plot_presentation else {
@@ -279,7 +279,7 @@ fn table_lines(rows: Vec<Vec<String>>) -> Option<Vec<String>> {
 }
 
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
-    let object = doc.objects.get(id.checked_sub(1)?)?;
+    let object = doc.objects().get(id.checked_sub(1)?)?;
     if let Kind::DataTable(_, group) = &object.kind {
         return Some((group.anchor(), table_lines(doc.data_table_cells(id)?)?));
     }
@@ -400,7 +400,7 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         && let Some((name, mut values)) = group.named_label_values()
     {
         if let Some(Kind::Parameter(parameter)) = doc
-            .objects
+            .objects()
             .get(source.checked_sub(1)?)
             .map(|object| &object.kind)
             && let Some(last) = values.last_mut()
@@ -526,7 +526,7 @@ pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
 // Reorder filled region slots; preserve all other drawing and picking order.
 fn ordered_region_fills(doc: &Document) -> Vec<&crate::document::Object> {
     let mut polygons: Vec<_> = doc
-        .objects
+        .objects()
         .iter()
         .filter(|o| doc.is_displayed(o.id) && o.kind.is_filled_region())
         .collect();
@@ -536,7 +536,7 @@ fn ordered_region_fills(doc: &Document) -> Vec<&crate::document::Object> {
 
 pub fn ordered_picture_ids(doc: &Document) -> Vec<usize> {
     let mut pictures = doc
-        .objects
+        .objects()
         .iter()
         .filter(|object| {
             doc.is_displayed(object.id)
@@ -1012,7 +1012,7 @@ struct GridGeometry {
 
 fn grid_geometry(doc: &Document, vp: &Viewport) -> GridGeometry {
     let mut geometry = GridGeometry::default();
-    for object in doc.objects.iter().filter(|object| {
+    for object in doc.objects().iter().filter(|object| {
         matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
     }) {
         let (form, dotted) = doc
@@ -1063,7 +1063,7 @@ type AxisLabel = (Pos2, String, bool);
 fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Vec<AxisLabel>) {
     let mut ticks = Vec::new();
     let mut labels = Vec::new();
-    for object in doc.objects.iter().filter(|object| {
+    for object in doc.objects().iter().filter(|object| {
         matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
     }) {
         let Kind::CoordinateSystem(x_axis, y_axis) = object.kind else {
@@ -1071,7 +1071,7 @@ fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Ve
         };
         let x_kind = x_axis
             .checked_sub(1)
-            .and_then(|id| doc.objects.get(id))
+            .and_then(|id| doc.objects().get(id))
             .map(|axis| &axis.kind);
         let circle_defined = matches!(x_kind, Some(Kind::CircleAxis(_, 1 | 0x1_0001)));
         let distance_defined = matches!(x_kind, Some(Kind::DistanceAxis(_, _, 1 | 0x1_0001)));
@@ -1205,7 +1205,7 @@ pub fn defined_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, 
 
 pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, bool)> {
     let mut labels = Vec::new();
-    for object in doc.objects.iter().filter(|object| {
+    for object in doc.objects().iter().filter(|object| {
         matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
     }) {
         let Kind::CoordinateSystem(x_axis, y_axis) = object.kind else {
@@ -1326,7 +1326,7 @@ fn ordered_svg_interiors(doc: &Document) -> Vec<SvgInterior> {
         .into_iter()
         .map(SvgInterior::Picture)
         .chain(
-            doc.objects
+            doc.objects()
                 .iter()
                 .filter(|object| doc.is_displayed(object.id) && object.kind.is_filled_region())
                 .map(|object| SvgInterior::Region(object.id)),
@@ -1334,7 +1334,7 @@ fn ordered_svg_interiors(doc: &Document) -> Vec<SvgInterior> {
         .collect::<Vec<_>>();
     let rank = |interior: SvgInterior| match interior {
         SvgInterior::Picture(id) => doc.picture_order(id),
-        SvgInterior::Region(id) => doc.objects[id - 1].interior_order,
+        SvgInterior::Region(id) => doc.objects()[id - 1].interior_order,
     };
     let fallback = |interior: SvgInterior| match interior {
         SvgInterior::Picture(id) => (0, id),
@@ -1491,7 +1491,7 @@ fn svg_page_with_layout(
     let evaluated = doc.evaluated();
     let doc = &*evaluated;
     if doc.partial_view
-        && doc.objects.iter().any(|object| {
+        && doc.objects().iter().any(|object| {
             object.page == doc.active_page
                 && !object.deleted
                 && matches!(object.kind, Kind::Unsupported(_))
@@ -1574,7 +1574,7 @@ fn svg_page_with_layout(
         )
         .unwrap();
     }
-    for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+    for o in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
         {
@@ -1956,7 +1956,7 @@ fn svg_page_with_layout(
         }
     }
     svg.push_str("</g>\n<g fill=\"#176bd6\">\n");
-    for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+    for o in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
             let (radius, color) = match doc.effective_visual_style(o.id) {
@@ -1974,7 +1974,7 @@ fn svg_page_with_layout(
         }
     }
     for object in doc
-        .objects
+        .objects()
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
@@ -1999,7 +1999,7 @@ fn svg_page_with_layout(
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
     let mut math_fonts = None;
     let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
-    for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+    for object in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((text, rect)) = doc.text_content(object.id) {
             let at = vp.screen(Point {
                 x: rect.left.into(),
@@ -2223,7 +2223,7 @@ fn svg_page_with_layout(
     }
     let mut row = 0;
     for object in doc
-        .objects
+        .objects()
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
@@ -2294,7 +2294,7 @@ fn svg_page_with_layout(
     }
     svg.push_str("</g>\n");
     for object in doc
-        .objects
+        .objects()
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
@@ -2750,7 +2750,7 @@ impl GeometryRenderer {
         }
         // Draw paths first and points last.
         let mut polygon_fills = ordered_region_fills(doc).into_iter();
-        for o in &doc.objects {
+        for o in doc.objects() {
             if !doc.is_displayed(o.id) {
                 continue;
             }
@@ -3076,7 +3076,7 @@ impl GeometryRenderer {
                 _ => {}
             }
         }
-        for o in &doc.objects {
+        for o in doc.objects() {
             if !doc.is_displayed(o.id) {
                 continue;
             }

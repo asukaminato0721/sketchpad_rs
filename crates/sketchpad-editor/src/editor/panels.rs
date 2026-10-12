@@ -173,13 +173,13 @@ impl Editor {
                     }
                 }
                 if let Some(id) = self.doc.selected.iter().next().copied() {
-                    let iteration_id = match self.doc.objects[id - 1].kind {
+                    let iteration_id = match self.doc.objects()[id - 1].kind {
                         Kind::MappedPointIteration { .. } => Some(id),
                         Kind::IterationBinding(_, parent) => Some(parent),
                         _ => None,
                     };
                     if let Some(iteration_id) = iteration_id
-                        && let Some(object) = self.doc.objects.get(iteration_id - 1)
+                        && let Some(object) = self.doc.objects().get(iteration_id - 1)
                         && let Kind::MappedPointIteration { mut final_only, .. } = object.kind
                     {
                         ui.separator();
@@ -198,9 +198,9 @@ impl Editor {
                     }
                     if self.inspected != Some(id) {
                         self.inspected = Some(id);
-                        self.edit_buffer = match &self.doc.objects[id - 1].kind {
+                        self.edit_buffer = match &self.doc.objects()[id - 1].kind {
                             Kind::PlainText { text, .. } => text.clone(),
-                            _ => self.doc.objects[id - 1]
+                            _ => self.doc.objects()[id - 1]
                                 .label
                                 .as_ref()
                                 .and_then(|label| label.name_utf8().ok())
@@ -208,7 +208,7 @@ impl Editor {
                                 .unwrap_or_else(|| format!("P{id}")),
                         };
                     }
-                    if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
+                    if matches!(self.doc.objects()[id - 1].kind, Kind::PlainText { .. }) {
                         ui.separator();
                         ui.label(tr("Edit selected text"));
                         let edit = egui::TextEdit::multiline(&mut self.edit_buffer).show(ui);
@@ -236,7 +236,7 @@ impl Editor {
                                 ("Underline", TextStyleCommand::Underline),
                             ] {
                                 if ui.button(tr(label)).clicked() {
-                                    let current = match &self.doc.objects[id - 1].kind {
+                                    let current = match &self.doc.objects()[id - 1].kind {
                                         Kind::PlainText { text, .. } => text.as_str(),
                                         _ => "",
                                     };
@@ -259,7 +259,7 @@ impl Editor {
                                 ("Smaller", TextStyleCommand::DecreaseSize),
                             ] {
                                 if ui.button(tr(label)).clicked() {
-                                    let current = match &self.doc.objects[id - 1].kind {
+                                    let current = match &self.doc.objects()[id - 1].kind {
                                         Kind::PlainText { text, .. } => text.as_str(),
                                         _ => "",
                                     };
@@ -282,7 +282,7 @@ impl Editor {
                                     .hint_text(tr("Font family")),
                             );
                             if ui.button(tr("Font for selection")).clicked() {
-                                let current = match &self.doc.objects[id - 1].kind {
+                                let current = match &self.doc.objects()[id - 1].kind {
                                     Kind::PlainText { text, .. } => text.as_str(),
                                     _ => "",
                                 };
@@ -309,7 +309,7 @@ impl Editor {
                         ui.separator();
                         ui.label(tr("Object label"));
                         ui.text_edit_singleline(&mut self.edit_buffer);
-                        let visible = self.doc.objects[id - 1]
+                        let visible = self.doc.objects()[id - 1]
                             .label
                             .as_ref()
                             .is_some_and(|label| label.visible());

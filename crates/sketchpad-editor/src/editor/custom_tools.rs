@@ -97,7 +97,7 @@ impl Editor {
             self.custom_tool_inputs.clear();
             self.custom_tool_path_start = None;
         }
-        self.properties_draft_for = None;
+        self.dialogs.properties_draft_for = None;
         self.selection_order = self.doc.selected.iter().copied().collect();
     }
 
@@ -362,7 +362,7 @@ impl Editor {
         if inputs.is_empty()
             || document.embedded_tool_inputs(index)?.iter().any(|input| {
                 !prototype
-                    .objects
+                    .objects()
                     .get(input.local_id - 1)
                     .is_some_and(|object| match input.kind() {
                         Some(EmbeddedToolInputKind::Point) => matches!(object.kind, Kind::Free(_)),
@@ -443,7 +443,7 @@ impl Editor {
                 id
             } else if input.kind() == Some(EmbeddedToolInputKind::Polygon) {
                 self.hit(viewport, at)
-                    .filter(|id| self.doc.objects[*id - 1].kind.is_polygon())
+                    .filter(|id| self.doc.objects()[*id - 1].kind.is_polygon())
                     .ok_or("Choose an available polygon")?
             } else if input.kind() == Some(EmbeddedToolInputKind::CoordinateSystem) {
                 self.hit_grid(viewport, at)
@@ -455,7 +455,7 @@ impl Editor {
                     .enumerate()
                     .rev()
                     .find(|(row, (id, text))| {
-                        self.doc.objects[*id - 1].kind.is_function()
+                        self.doc.objects()[*id - 1].kind.is_function()
                             && self
                                 .overlay_row_rect(viewport, *row, *id, text)
                                 .contains(at)
@@ -464,7 +464,7 @@ impl Editor {
                     .ok_or("Choose an available function caption")?
             } else if input.kind() == Some(EmbeddedToolInputKind::Preimage) {
                 self.hit(viewport, at)
-                    .filter(|id| self.doc.objects[*id - 1].kind.is_preimage_geometry())
+                    .filter(|id| self.doc.objects()[*id - 1].kind.is_preimage_geometry())
                     .ok_or("Choose an available preimage")?
             } else if matches!(
                 input.kind(),
@@ -483,7 +483,7 @@ impl Editor {
                 let distance = input.kind() == Some(EmbeddedToolInputKind::Distance);
                 let overlays = self.overlay_rows();
                 self.doc
-                    .objects
+                    .objects()
                     .iter()
                     .rev()
                     .find(|object| {
@@ -577,30 +577,29 @@ impl Editor {
             self.status = "Choose the second endpoint for the tool input segment".into();
             return Ok(None);
         }
-        let mut candidate = self.doc.clone();
-        let history = candidate.undo.len();
-        let first = match self.custom_tool_path_start.unwrap() {
-            PathStart::Existing(id) => id,
-            PathStart::New(point) => candidate.add(Kind::Free(point)),
-        };
-        let second = if let Some(id) = self.hit_point(viewport, at) {
-            id
-        } else {
-            let world = viewport.world(at);
-            let kind = self
-                .hit(viewport, at)
-                .and_then(|host| candidate.constrained_point(host, world))
-                .unwrap_or_else(|| Kind::Free(candidate.snap_point(world)));
-            candidate.add(kind)
-        };
-        if candidate.position(first) == candidate.position(second) {
-            return Err("Choose a different second endpoint".into());
-        }
-        let segment = candidate.add(Kind::Segment(first, second));
-        candidate.encode()?;
-        // Endpoint creation and its segment form one completed input construction.
-        candidate.undo.truncate(history + 1);
-        self.doc = candidate;
+        let second_id = self.hit_point(viewport, at);
+        let second_host = self.hit(viewport, at);
+        let world = viewport.world(at);
+        let segment = self.doc.transaction(|candidate| {
+            let first = match self.custom_tool_path_start.unwrap() {
+                PathStart::Existing(id) => id,
+                PathStart::New(point) => candidate.add(Kind::Free(point)),
+            };
+            let second = if let Some(id) = second_id {
+                id
+            } else {
+                let kind = second_host
+                    .and_then(|host| candidate.constrained_point(host, world))
+                    .unwrap_or_else(|| Kind::Free(candidate.snap_point(world)));
+                candidate.add(kind)
+            };
+            if candidate.position(first) == candidate.position(second) {
+                return Err("Choose a different second endpoint".into());
+            }
+            let segment = candidate.add(Kind::Segment(first, second));
+            candidate.encode()?;
+            Ok(segment)
+        })?;
         self.custom_tool_path_start = None;
         Ok(Some(segment))
     }
@@ -612,7 +611,7 @@ impl Editor {
         finite_segment: bool,
     ) -> Option<usize> {
         self.doc
-            .objects
+            .objects()
             .iter()
             .rev()
             .filter(|object| self.doc.is_displayed(object.id))
@@ -736,20 +735,20 @@ mod tests {
             editor
                 .selection_order
                 .iter()
-                .any(|&id| matches!(editor.doc.objects[id - 1].kind, Kind::Segment(_, _)))
+                .any(|&id| matches!(editor.doc.objects()[id - 1].kind, Kind::Segment(_, _)))
         );
-        let object_count = editor.doc.objects.len();
+        let object_count = editor.doc.objects().len();
 
         editor.forget_tool_folder();
         assert!(editor.tool_folder.is_none());
-        assert_eq!(editor.doc.objects.len(), object_count);
+        assert_eq!(editor.doc.objects().len(), object_count);
 
         editor.tool_folder = Some(ToolFolder::load(&directory).unwrap());
         editor.replace_document(Document::new());
         assert_eq!(editor.tool_folder.as_ref().unwrap().tool_count(), 1);
         editor.forget_tool_folder();
         assert!(editor.tool_folder.is_none());
-        assert!(editor.doc.objects.is_empty());
+        assert!(editor.doc.objects().is_empty());
 
         std::fs::remove_dir_all(directory).unwrap();
     }

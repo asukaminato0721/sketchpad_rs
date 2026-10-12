@@ -155,7 +155,7 @@ struct Substitution {
 /// use sketchpad_engine::document::{Document, Kind, Point};
 /// let mut doc = Document::new();
 /// doc.add(Kind::Free(Point { x: 0., y: 0. }));
-/// doc.objects[0].deleted = true;
+/// doc.objects()[0].deleted = true;
 /// ```
 #[derive(Debug)]
 pub struct ObjectStore {

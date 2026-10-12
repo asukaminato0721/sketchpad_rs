@@ -37,7 +37,7 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
         (circle, [7, 8, 9]),
         (polygon, [10, 11, 12]),
     ] {
-        let color = match editor.doc.objects[id - 1].visual_style.unwrap() {
+        let color = match editor.doc.objects()[id - 1].visual_style.unwrap() {
             sketchpad_engine::style_records::VisualStyle::Point { color, .. }
             | sketchpad_engine::style_records::VisualStyle::Stroke { color, .. }
             | sketchpad_engine::style_records::VisualStyle::Polygon { color, .. } => color,
@@ -47,8 +47,8 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
     for id in [a, segment, circle, polygon] {
         assert_eq!(
-            reopened.objects[id - 1].visual_style,
-            editor.doc.objects[id - 1].visual_style
+            reopened.objects()[id - 1].visual_style,
+            editor.doc.objects()[id - 1].visual_style
         );
     }
 
@@ -66,7 +66,7 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     let next_segment = editor.doc.add(Kind::Segment(b, c));
     let next_circle = editor.doc.add(Kind::Circle(b, c));
     for id in [next_segment, next_circle] {
-        let color = match editor.doc.objects[id - 1].visual_style.unwrap() {
+        let color = match editor.doc.objects()[id - 1].visual_style.unwrap() {
             sketchpad_engine::style_records::VisualStyle::Stroke { color, .. } => color,
             _ => panic!("expected stroke style"),
         };
@@ -95,7 +95,7 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     assert_eq!(editor.preferences.point_color, [1, 2, 3]);
     let next_point = editor.doc.add(Kind::Free(Point { x: 50., y: 50. }));
     assert!(matches!(
-        editor.doc.objects[next_point - 1].visual_style,
+        editor.doc.objects()[next_point - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Point {
             color: sketchpad_engine::style_records::RgbColor {
                 red: 1,
@@ -135,7 +135,7 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     editor.sync_document_preferences();
     let random_a = editor.doc.add(Kind::Polygon(vec![a, b, c]));
     let random_b = editor.doc.add(Kind::Polygon(vec![a, b, c]));
-    let polygon_color = |id: usize| match editor.doc.objects[id - 1].visual_style.unwrap() {
+    let polygon_color = |id: usize| match editor.doc.objects()[id - 1].visual_style.unwrap() {
         sketchpad_engine::style_records::VisualStyle::Polygon { color, .. } => color,
         _ => panic!("expected polygon style"),
     };
@@ -160,14 +160,14 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     let segment = editor.doc.add(Kind::Segment(a, b));
     let circle = editor.doc.add(Kind::Circle(a, b));
     assert!(matches!(
-        editor.doc.objects[a - 1].visual_style,
+        editor.doc.objects()[a - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Point {
             shape: sketchpad_engine::style_records::PointStyle::Large,
             ..
         })
     ));
     assert!(matches!(
-        editor.doc.objects[segment - 1].visual_style,
+        editor.doc.objects()[segment - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Stroke {
             line: sketchpad_engine::style_records::SegmentLineStyle {
                 width: sketchpad_engine::style_records::LineWidth::Thick,
@@ -177,7 +177,7 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
         })
     ));
     assert!(matches!(
-        editor.doc.objects[circle - 1].visual_style,
+        editor.doc.objects()[circle - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Stroke {
             line: sketchpad_engine::style_records::SegmentLineStyle {
                 width: sketchpad_engine::style_records::LineWidth::Thick,
@@ -199,21 +199,30 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
         .add_calculation_expression("2+3", (10, 40))
         .unwrap();
     assert_eq!(
-        editor.doc.objects[length - 1].measurement_precision,
+        editor.doc.objects()[length - 1].measurement_precision,
         Some(3)
     );
-    assert_eq!(editor.doc.objects[area - 1].measurement_precision, Some(3));
+    assert_eq!(
+        editor.doc.objects()[area - 1].measurement_precision,
+        Some(3)
+    );
     assert!(matches!(
-        editor.doc.objects[polygon - 1].visual_style,
+        editor.doc.objects()[polygon - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Polygon { opacity: 49151, .. })
     ));
     assert!(matches!(
-        editor.doc.objects[circle_interior - 1].visual_style,
+        editor.doc.objects()[circle_interior - 1].visual_style,
         Some(sketchpad_engine::style_records::VisualStyle::Polygon { opacity: 32767, .. })
     ));
-    assert_eq!(editor.doc.objects[angle - 1].measurement_precision, Some(1));
-    assert_eq!(editor.doc.objects[ratio - 1].measurement_precision, Some(5));
-    let Kind::Calculation(group) = &editor.doc.objects[calculation - 1].kind else {
+    assert_eq!(
+        editor.doc.objects()[angle - 1].measurement_precision,
+        Some(1)
+    );
+    assert_eq!(
+        editor.doc.objects()[ratio - 1].measurement_precision,
+        Some(5)
+    );
+    let Kind::Calculation(group) = &editor.doc.objects()[calculation - 1].kind else {
         panic!("expected calculation");
     };
     assert_eq!(group.precision(), 5);
@@ -221,9 +230,12 @@ fn text_palette_formats_selected_text_without_changing_document_visibility_state
     editor.preferences.angle_precision = 4;
     editor.sync_document_preferences();
     let next_angle = editor.doc.add(Kind::AngleMeasurement(a, b, c));
-    assert_eq!(editor.doc.objects[angle - 1].measurement_precision, Some(1));
     assert_eq!(
-        editor.doc.objects[next_angle - 1].measurement_precision,
+        editor.doc.objects()[angle - 1].measurement_precision,
+        Some(1)
+    );
+    assert_eq!(
+        editor.doc.objects()[next_angle - 1].measurement_precision,
         Some(4)
     );
 }

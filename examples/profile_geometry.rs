@@ -14,7 +14,7 @@ fn geometry(doc: &Document, detail: bool, verify: bool) -> String {
             black_box(value)
         }};
     }
-    for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+    for object in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
         let id = object.id;
         let start = Instant::now();
         observe!(doc.position(id));
@@ -68,14 +68,14 @@ fn main() -> Result<(), String> {
     println!(
         "open\t{:.3}\tobjects={}\tvisible={}",
         start.elapsed().as_secs_f64() * 1000.,
-        doc.objects.len(),
-        doc.objects
+        doc.objects().len(),
+        doc.objects()
             .iter()
             .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
             .count()
     );
     if std::env::var_os("SKETCHPAD_PROFILE_KINDS").is_some() {
-        for object in &doc.objects {
+        for object in doc.objects() {
             println!("kind\t{}\t{:?}", object.id, object.kind);
         }
     }
@@ -92,7 +92,7 @@ fn main() -> Result<(), String> {
             start.elapsed().as_secs_f64() * 1000.
         );
     }
-    let driver = doc.objects.iter().find_map(|object| match object.kind {
+    let driver = doc.objects().iter().find_map(|object| match object.kind {
         Kind::Free(point) => Some((object.id, point)),
         _ => None,
     });

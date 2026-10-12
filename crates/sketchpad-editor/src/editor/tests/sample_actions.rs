@@ -10,7 +10,7 @@ fn parameter_buttons_convert_native_ranges_and_rates_to_display_units() {
         for discrete in [false, true] {
             let mut doc = Document::from_bytes(bytes, None).unwrap();
             doc.set_parameter_value(target, 1.).unwrap();
-            let Kind::Parameter(group) = &doc.objects[target - 1].kind else {
+            let Kind::Parameter(group) = &doc.objects()[target - 1].kind else {
                 panic!("Expected parameter");
             };
             let scale = group.native_unit_scale();
@@ -98,7 +98,7 @@ fn reset_button_replaces_another_buttons_animation_in_one_click() {
         "Reset must start on its first click"
     );
     editor.tick_animation(0.1);
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         unreachable!()
     };
     assert!((0. ..=0.001).contains(&group.value()));
@@ -147,7 +147,7 @@ fn compact_buttons_receive_clicks_before_overlapping_captions() {
     };
     editor.button_view_center = viewport.center;
     for (source, button) in sources.into_iter().zip(buttons) {
-        let Kind::HideShowButton { label, anchor, .. } = &editor.doc.objects[button - 1].kind
+        let Kind::HideShowButton { label, anchor, .. } = &editor.doc.objects()[button - 1].kind
         else {
             unreachable!()
         };
@@ -158,7 +158,7 @@ fn compact_buttons_receive_clicks_before_overlapping_captions() {
             Some(button)
         );
         editor.click(&viewport, rect.center(), false);
-        assert!(!editor.doc.objects[source - 1].visible);
+        assert!(!editor.doc.objects()[source - 1].visible);
         assert_eq!(editor.status, format!("Activated button {button}"));
     }
 }
@@ -177,8 +177,10 @@ fn presentation_runs_hidden_movement_and_nested_presentation() {
     let parent = doc
         .add_presentation_button_for_targets(&[nested], PresentationMode::Sequential)
         .unwrap();
-    doc.objects.edit(movement - 1).visible = false;
-    doc.objects.edit(nested - 1).visible = false;
+    doc.edit_object((movement - 1) + 1, |object| object.visible = false)
+        .unwrap();
+    doc.edit_object((nested - 1) + 1, |object| object.visible = false)
+        .unwrap();
     let mut editor = Editor::new(doc);
     editor.scale = 1.;
     let viewport = Viewport {
@@ -206,16 +208,25 @@ fn presentation_runs_hidden_movement_and_nested_presentation() {
     );
     assert!(editor.movements.is_empty());
     assert!(editor.presentations.is_empty());
-    assert!(!editor.doc.objects[movement - 1].visible);
-    assert!(!editor.doc.objects[nested - 1].visible);
-    editor.doc.objects.edit(movement - 1).deleted = true;
+    assert!(!editor.doc.objects()[movement - 1].visible);
+    assert!(!editor.doc.objects()[nested - 1].visible);
+    editor
+        .doc
+        .edit_object((movement - 1) + 1, |object| object.deleted = true)
+        .unwrap();
     assert!(
         editor
             .activate_presentation_button(parent, &viewport, 0)
             .is_err()
     );
-    editor.doc.objects.edit(movement - 1).deleted = false;
-    editor.doc.objects.edit(movement - 1).page = 1;
+    editor
+        .doc
+        .edit_object((movement - 1) + 1, |object| object.deleted = false)
+        .unwrap();
+    editor
+        .doc
+        .edit_object((movement - 1) + 1, |object| object.page = 1)
+        .unwrap();
     assert!(
         editor
             .activate_presentation_button(parent, &viewport, 0)
@@ -236,7 +247,7 @@ fn external_sample_action_buttons() {
     };
     let mut checked = 0;
     for object in doc
-        .objects
+        .objects()
         .iter()
         .filter(|object| object.visible && !object.deleted)
     {
@@ -301,7 +312,7 @@ fn external_sample_action_buttons() {
                         editor.status
                     );
                 }
-                if let Kind::Parameter(group) = &editor.doc.objects[target - 1].kind {
+                if let Kind::Parameter(group) = &editor.doc.objects()[target - 1].kind {
                     let domain = setting.parameter.unwrap();
                     let scale = group.native_unit_scale();
                     let tolerance = 10_f64.powi(-(group.precision() as i32)) / 2.;
@@ -340,7 +351,7 @@ fn external_sample_action_buttons() {
     eprintln!("Checked {checked} buttons");
     // Check save after a parameter animation without changing the source file.
     if let Some(parameter) = doc
-        .objects
+        .objects()
         .iter()
         .find(|object| matches!(object.kind, Kind::Parameter(_)))
     {
@@ -357,7 +368,7 @@ fn external_sample_action_buttons() {
             reopened.numeric_value(parameter.id),
             editor.doc.numeric_value(parameter.id)
         );
-        for (before, after) in doc.objects.iter().zip(reopened.objects.iter()) {
+        for (before, after) in doc.objects().iter().zip(reopened.objects().iter()) {
             if matches!(before.kind, Kind::Image { .. }) {
                 assert_eq!(before.kind, after.kind, "Image {} changed", before.id);
             }

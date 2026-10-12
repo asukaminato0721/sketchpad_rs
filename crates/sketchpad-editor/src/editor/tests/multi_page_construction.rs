@@ -21,7 +21,7 @@ fn point_tool_adds_free_and_constrained_points_on_multi_page_sketch() {
         false,
     );
     assert!(
-        matches!(editor.doc.objects[5].kind, Kind::PointOnSegment(4, t) if (t - 0.75).abs() < 1e-12)
+        matches!(editor.doc.objects()[5].kind, Kind::PointOnSegment(4, t) if (t - 0.75).abs() < 1e-12)
     );
     editor.click(
         &viewport,
@@ -29,10 +29,13 @@ fn point_tool_adds_free_and_constrained_points_on_multi_page_sketch() {
         false,
     );
     assert!(
-        matches!(editor.doc.objects[6].kind, Kind::Free(Point { x, y }) if (x - 260.).abs() < 1e-8 && (y - 220.).abs() < 1e-8)
+        matches!(editor.doc.objects()[6].kind, Kind::Free(Point { x, y }) if (x - 260.).abs() < 1e-8 && (y - 220.).abs() < 1e-8)
     );
     let saved = editor.doc.encode().unwrap();
-    assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 7);
+    assert_eq!(
+        Document::from_bytes(&saved, None).unwrap().objects().len(),
+        7
+    );
 }
 
 #[test]
@@ -58,13 +61,16 @@ fn point_tool_and_construct_command_use_ray_and_line_hosts() {
             center: Point { x: 250., y: 150. },
         };
         editor.click(&viewport, viewport.screen(click), false);
-        assert_eq!(editor.doc.objects[5].kind, expected);
+        assert_eq!(editor.doc.objects()[5].kind, expected);
         editor.selection_order = vec![5];
         editor.doc.selected = [5].into();
         editor.point_on_object();
-        assert_eq!(editor.doc.objects.len(), 7);
+        assert_eq!(editor.doc.objects().len(), 7);
         let saved = editor.doc.encode().unwrap();
-        assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 7);
+        assert_eq!(
+            Document::from_bytes(&saved, None).unwrap().objects().len(),
+            7
+        );
     }
 }
 
@@ -93,7 +99,7 @@ fn segment_and_circle_tools_construct_on_multi_page_sketch() {
         viewport.screen(Point { x: 291., y: 111. }),
         false,
     );
-    assert_eq!(editor.doc.objects[3].kind, Kind::Segment(2, 3));
+    assert_eq!(editor.doc.objects()[3].kind, Kind::Segment(2, 3));
     assert_eq!(
         editor.doc.encode().unwrap(),
         include_bytes!("../../../../../tests/fixtures/two_page_segment_port.gsp")
@@ -109,25 +115,25 @@ fn segment_and_circle_tools_construct_on_multi_page_sketch() {
         viewport.screen(Point { x: 291., y: 111. }),
         false,
     );
-    assert_eq!(editor.doc.objects[4].kind, Kind::Circle(2, 3));
+    assert_eq!(editor.doc.objects()[4].kind, Kind::Circle(2, 3));
     let saved = editor.doc.encode().unwrap();
     let reopened = Document::from_bytes(&saved, None).unwrap();
-    assert_eq!(reopened.objects[4].kind, Kind::Circle(2, 3));
+    assert_eq!(reopened.objects()[4].kind, Kind::Circle(2, 3));
     editor.selection_order = vec![2, 3];
     editor.pair(1);
-    assert_eq!(editor.doc.objects[5].kind, Kind::Circle(2, 3));
+    assert_eq!(editor.doc.objects()[5].kind, Kind::Circle(2, 3));
     editor.selection_order = vec![2, 3];
     editor.pair(3);
-    assert_eq!(editor.doc.objects[6].kind, Kind::Line(2, 3));
+    assert_eq!(editor.doc.objects()[6].kind, Kind::Line(2, 3));
     editor.selection_order = vec![2, 3];
     editor.pair(4);
-    assert_eq!(editor.doc.objects[7].kind, Kind::Ray(2, 3));
+    assert_eq!(editor.doc.objects()[7].kind, Kind::Ray(2, 3));
     editor.selection_order = vec![2, 3];
     editor.pair(2);
-    assert_eq!(editor.doc.objects[8].kind, Kind::Midpoint(2, 3));
+    assert_eq!(editor.doc.objects()[8].kind, Kind::Midpoint(2, 3));
     editor.selection_order = vec![2, 4];
     editor.circle_by_segment();
-    assert_eq!(editor.doc.objects[9].kind, Kind::CircleBySegment(2, 4));
+    assert_eq!(editor.doc.objects()[9].kind, Kind::CircleBySegment(2, 4));
     assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
 }
 
@@ -144,24 +150,27 @@ fn derived_lines_intersection_and_point_on_object_work_on_multi_page_sketch() {
     editor.selection_order = vec![point, 4];
     editor.doc.selected = editor.selection_order.iter().copied().collect();
     editor.derived_line(false);
-    assert_eq!(editor.doc.objects[5].kind, Kind::Parallel(point, 4));
+    assert_eq!(editor.doc.objects()[5].kind, Kind::Parallel(point, 4));
     editor.selection_order = vec![point, 4];
     editor.doc.selected = editor.selection_order.iter().copied().collect();
     editor.derived_line(true);
-    assert_eq!(editor.doc.objects[6].kind, Kind::Perpendicular(point, 4));
+    assert_eq!(editor.doc.objects()[6].kind, Kind::Perpendicular(point, 4));
     editor.selection_order = vec![4, 7];
     editor.doc.selected = editor.selection_order.iter().copied().collect();
     editor.intersection();
-    assert_eq!(editor.doc.objects[7].kind, Kind::Intersection(4, 7));
+    assert_eq!(editor.doc.objects()[7].kind, Kind::Intersection(4, 7));
     assert_eq!(editor.doc.position(8), Some(Point { x: 201., y: 111. }));
     editor.selection_order = vec![4];
     editor.doc.selected = editor.selection_order.iter().copied().collect();
     editor.point_on_object();
     assert!(
-        matches!(editor.doc.objects[8].kind, Kind::PointOnSegment(4, t) if (t - 0.5).abs() < 1e-12)
+        matches!(editor.doc.objects()[8].kind, Kind::PointOnSegment(4, t) if (t - 0.5).abs() < 1e-12)
     );
     let saved = editor.doc.encode().unwrap();
-    assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 9);
+    assert_eq!(
+        Document::from_bytes(&saved, None).unwrap().objects().len(),
+        9
+    );
 }
 
 #[test]
@@ -178,10 +187,10 @@ fn bisector_and_arcs_work_on_multi_page_sketch() {
     let c = editor.doc.add(Kind::Free(Point { x: 260., y: 160. }));
     editor.selection_order = vec![a, b, c];
     editor.angle_bisector();
-    assert_eq!(editor.doc.objects[4].kind, Kind::Bisector(a, b, c));
+    assert_eq!(editor.doc.objects()[4].kind, Kind::Bisector(a, b, c));
     editor.selection_order = vec![a, b, c];
     editor.three_point_arc();
-    assert_eq!(editor.doc.objects[5].kind, Kind::ThreePointArc(a, b, c));
+    assert_eq!(editor.doc.objects()[5].kind, Kind::ThreePointArc(a, b, c));
     assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
 
     let circle = editor.doc.add(Kind::Circle(a, c));
@@ -200,7 +209,7 @@ fn bisector_and_arcs_work_on_multi_page_sketch() {
     editor.selection_order = vec![circle, start, end];
     editor.arc_on_circle();
     assert_eq!(
-        editor.doc.objects[9].kind,
+        editor.doc.objects()[9].kind,
         Kind::ArcOnCircle(circle, start, end)
     );
     assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
@@ -220,7 +229,7 @@ fn polygon_interior_works_on_multi_page_sketch() {
     let c = editor.doc.add(Kind::Free(Point { x: 300., y: 180. }));
     editor.selection_order = vec![a, b, c];
     editor.polygon_interior();
-    assert_eq!(editor.doc.objects[4].kind, Kind::Polygon(vec![a, b, c]));
+    assert_eq!(editor.doc.objects()[4].kind, Kind::Polygon(vec![a, b, c]));
     assert_eq!(
         editor.doc.encode().unwrap(),
         include_bytes!("../../../../../tests/fixtures/two_page_polygon_port.gsp")
@@ -250,9 +259,9 @@ fn text_tool_creates_editable_caption_on_supported_multi_page_sketch() {
         viewport.screen(Point { x: 110., y: 240. }),
         false,
     );
-    assert_eq!(editor.doc.objects.len(), 5);
-    assert_eq!(editor.doc.objects[4].page, 1);
-    assert!(matches!(&editor.doc.objects[4].kind,
+    assert_eq!(editor.doc.objects().len(), 5);
+    assert_eq!(editor.doc.objects()[4].page, 1);
+    assert!(matches!(&editor.doc.objects()[4].kind,
         Kind::PlainText { text, .. } if text == "New caption on page 2"));
     assert_eq!(
         editor.doc.selected.iter().copied().collect::<Vec<_>>(),

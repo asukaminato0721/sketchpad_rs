@@ -5,26 +5,26 @@ use sketchpad_engine::plot_points_records::PlotPointsMode;
 
 impl Editor {
     pub(super) fn plot_dialogs_ui(&mut self, root: &mut egui::Ui) {
-        if let Some(path) = self.plot_axis_dialog {
+        if let Some(path) = self.dialogs.plot_axis_dialog {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("plot_axis_value")).show(root.ctx(), |ui| {
                 ui.heading(tr("Plot Value on Path"));
                 ui.horizontal(|ui| {
                     ui.label(tr("Value"));
-                    ui.text_edit_singleline(&mut self.plot_axis_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.plot_axis_draft);
                 });
                 ui.label(tr(match path {
-                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Segment(_, _)) => {
+                    Some(id) if matches!(self.doc.objects()[id - 1].kind, Kind::Segment(_, _)) => {
                         format!("Segment object {id} (0 to 1)")
                     }
-                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Ray(_, _)) => {
+                    Some(id) if matches!(self.doc.objects()[id - 1].kind, Kind::Ray(_, _)) => {
                         format!("Ray object {id} (0 or greater)")
                     }
-                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Line(_, _)) => {
+                    Some(id) if matches!(self.doc.objects()[id - 1].kind, Kind::Line(_, _)) => {
                         format!("Line object {id}")
                     }
-                    Some(id) if is_circle_construction_host(&self.doc.objects[id - 1].kind) => {
+                    Some(id) if is_circle_construction_host(&self.doc.objects()[id - 1].kind) => {
                         format!("Circle object {id} (counterclockwise turns)")
                     }
                     Some(id) => format!("Axis object {id}"),
@@ -36,10 +36,11 @@ impl Editor {
                 });
             });
             if cancel {
-                self.plot_axis_dialog = None;
+                self.dialogs.plot_axis_dialog = None;
             }
             if apply {
                 let result = self
+                    .dialogs
                     .plot_axis_draft
                     .trim()
                     .parse::<f64>()
@@ -55,7 +56,7 @@ impl Editor {
                     });
                 match result {
                     Ok(id) => {
-                        self.plot_axis_dialog = None;
+                        self.dialogs.plot_axis_dialog = None;
                         self.select_only(id);
                         self.status = format!("Plotted path value {id}");
                     }
@@ -63,7 +64,7 @@ impl Editor {
                 }
             }
         }
-        if let Some(mode) = self.plot_points_dialog {
+        if let Some(mode) = self.dialogs.plot_points_dialog {
             let mut apply = false;
             let mut done = false;
             egui::Modal::new(egui::Id::new("plot_points")).show(root.ctx(), |ui| {
@@ -74,7 +75,7 @@ impl Editor {
                     } else {
                         "Radius"
                     }));
-                    ui.text_edit_singleline(&mut self.plot_points_first_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.plot_points_first_draft);
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr(if mode == PlotPointsMode::Cartesian {
@@ -82,7 +83,7 @@ impl Editor {
                     } else {
                         "Angle (degrees)"
                     }));
-                    ui.text_edit_singleline(&mut self.plot_points_second_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.plot_points_second_draft);
                 });
                 ui.horizontal(|ui| {
                     apply = ui.button(tr("Plot")).clicked();
@@ -90,12 +91,12 @@ impl Editor {
                 });
             });
             if done {
-                self.plot_points_dialog = None;
+                self.dialogs.plot_points_dialog = None;
             }
             if apply {
                 let coordinates = [
-                    self.plot_points_first_draft.trim().parse::<f64>(),
-                    self.plot_points_second_draft.trim().parse::<f64>(),
+                    self.dialogs.plot_points_first_draft.trim().parse::<f64>(),
+                    self.dialogs.plot_points_second_draft.trim().parse::<f64>(),
                 ];
                 let result = match coordinates {
                     [Ok(first), Ok(second)] => self.doc.plot_points_at(mode, [first, second]),
@@ -105,14 +106,14 @@ impl Editor {
                     Ok(id) => {
                         self.select_only(id);
                         self.status = format!("Plotted point {id}");
-                        self.plot_points_first_draft.clear();
-                        self.plot_points_second_draft.clear();
+                        self.dialogs.plot_points_first_draft.clear();
+                        self.dialogs.plot_points_second_draft.clear();
                     }
                     Err(error) => self.status = error,
                 }
             }
         }
-        if let Some(table) = self.plot_table_dialog {
+        if let Some(table) = self.dialogs.plot_table_dialog {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("plot_table_data")).show(root.ctx(), |ui| {
@@ -121,12 +122,12 @@ impl Editor {
                 ui.label(tr("Second coordinate: t₁"));
                 ui.horizontal(|ui| {
                     ui.radio_value(
-                        &mut self.plot_table_mode,
+                        &mut self.dialogs.plot_table_mode,
                         PlotPointsMode::Cartesian,
                         tr("Cartesian (x, y)"),
                     );
                     ui.radio_value(
-                        &mut self.plot_table_mode,
+                        &mut self.dialogs.plot_table_mode,
                         PlotPointsMode::Polar,
                         tr("Polar (r, θ in degrees)"),
                     );
@@ -137,12 +138,15 @@ impl Editor {
                 });
             });
             if cancel {
-                self.plot_table_dialog = None;
+                self.dialogs.plot_table_dialog = None;
             }
             if apply {
-                match self.doc.plot_pair_table_data(table, self.plot_table_mode) {
+                match self
+                    .doc
+                    .plot_pair_table_data(table, self.dialogs.plot_table_mode)
+                {
                     Ok(ids) => {
-                        self.plot_table_dialog = None;
+                        self.dialogs.plot_table_dialog = None;
                         if let Some(id) = ids.last() {
                             self.select_only(*id);
                         }

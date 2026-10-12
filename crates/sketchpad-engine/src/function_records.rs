@@ -913,33 +913,20 @@ fn u32_at(bytes: &[u8], offset: usize) -> u32 {
 }
 
 fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
-    if !bytes.starts_with(b"GSP4") {
+    if bytes.get(..4) != Some(b"GSP4") {
         return Err("Expected a GSP4 document".into());
     }
-    let mut records = Vec::new();
-    let mut start = 4usize;
-    while start < bytes.len() {
-        if bytes.len() - start < 8 {
-            return Err("Truncated record header".into());
-        }
-        let length = u32_at(bytes, start) as usize;
-        let payload_start = start + 8;
-        let end = payload_start
-            .checked_add(length)
-            .and_then(|end| end.checked_add(length & 1))
-            .ok_or("Record length overflow")?;
-        if end > bytes.len() {
-            return Err("Truncated record payload".into());
-        }
-        records.push(Record {
-            kind: u32_at(bytes, start + 4),
-            start,
-            payload_start,
-            end,
-        });
-        start = end;
-    }
-    Ok(records)
+    sketchpad_format::records_from(bytes, 4).map(|records| {
+        records
+            .into_iter()
+            .map(|record| Record {
+                kind: record.kind,
+                start: record.start,
+                end: record.end,
+                payload_start: record.data.start,
+            })
+            .collect()
+    })
 }
 
 fn payload(bytes: &[u8], record: Record) -> &[u8] {

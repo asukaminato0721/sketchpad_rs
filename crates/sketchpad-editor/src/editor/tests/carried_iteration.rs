@@ -11,7 +11,7 @@ fn selected_rotation_creates_point_iteration() {
     editor.doc.selected.extend([seed, image]);
     editor.iterate_selected(4);
     assert_eq!(
-        editor.doc.objects[3].kind,
+        editor.doc.objects()[3].kind,
         Kind::PointIteration(seed, image, IterationDepth::Fixed(4))
     );
     assert_eq!(editor.doc.point_iteration_images(4).unwrap().len(), 4);
@@ -73,7 +73,7 @@ fn selected_circle_iteration_fixed_live_and_picking() {
         editor.iterate_selected(3);
         let iteration = if live { 5 } else { 4 };
         assert_eq!(
-            editor.doc.objects[iteration - 1].kind,
+            editor.doc.objects()[iteration - 1].kind,
             Kind::CircleIteration(
                 seed,
                 image,
@@ -117,7 +117,7 @@ fn selected_rotation_and_segment_create_carried_iteration() {
     editor.doc.selected.extend([seed, image, segment]);
     editor.iterate_selected(4);
     assert_eq!(
-        editor.doc.objects[4].kind,
+        editor.doc.objects()[4].kind,
         Kind::SegmentIteration(seed, image, segment, IterationDepth::Fixed(4))
     );
     assert_eq!(editor.doc.segment_iteration_images(5).unwrap().len(), 4);
@@ -144,7 +144,7 @@ fn selected_translation_and_segment_create_carried_iteration() {
     editor.doc.selected.extend([seed, image, segment]);
     editor.iterate_selected(4);
     assert_eq!(
-        editor.doc.objects[3].kind,
+        editor.doc.objects()[3].kind,
         Kind::SegmentIteration(seed, image, segment, IterationDepth::Fixed(4))
     );
     assert_eq!(
@@ -171,7 +171,7 @@ fn calculated_rotation_ray_and_scalar_formula_create_live_iteration() {
     editor.iterate_selected(4);
     let id = *editor.doc.selected.iter().next().unwrap();
     assert_eq!(
-        editor.doc.objects[id - 1].kind,
+        editor.doc.objects()[id - 1].kind,
         Kind::RayIteration(3, 6, 7, 5)
     );
     editor.doc.set_parameter_value(1, 6.).unwrap();
@@ -201,7 +201,7 @@ fn selected_translation_ray_and_parameter_create_live_iteration() {
     editor.doc.selected.extend([seed, image, ray, parameter]);
     editor.iterate_selected(3);
     assert_eq!(
-        editor.doc.objects[4].kind,
+        editor.doc.objects()[4].kind,
         Kind::RayIteration(seed, image, ray, parameter)
     );
     assert_eq!(editor.doc.point_iteration_images(5).unwrap().len(), 4);

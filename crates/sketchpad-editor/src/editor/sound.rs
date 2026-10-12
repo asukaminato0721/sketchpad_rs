@@ -107,7 +107,7 @@ impl Editor {
         }
         let object = self
             .doc
-            .objects
+            .objects()
             .get(button.checked_sub(1).ok_or("Invalid Sound button ID")?)
             .ok_or("Invalid Sound button ID")?;
         if object.deleted || !object.visible || object.page != self.doc.active_page {
@@ -119,7 +119,7 @@ impl Editor {
         if !(1..=2).contains(&functions.len())
             || functions.iter().any(|&function| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(function.saturating_sub(1))
                     .is_none_or(|source| source.deleted || !source.kind.is_function())
             })

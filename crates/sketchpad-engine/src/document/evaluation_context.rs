@@ -355,6 +355,7 @@ impl Document {
             custom_transform_definitions: self.custom_transform_definitions.clone(),
             safe_structure: self.safe_structure,
             image_read_only: self.image_read_only,
+            history_suspended: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }

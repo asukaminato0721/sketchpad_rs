@@ -33,7 +33,7 @@ impl Editor {
 
     fn hit_point_in(&self, doc: &Document, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         let radius = self.point_hit_radius();
-        doc.objects
+        doc.objects()
             .iter()
             .rev()
             .filter(|o| doc.is_displayed(o.id))
@@ -49,7 +49,7 @@ impl Editor {
         let world = v.world(p);
         let radius = self.geometry_hit_radius();
         self.doc
-            .objects
+            .objects()
             .iter()
             .rev()
             .filter(|object| {
@@ -92,7 +92,7 @@ impl Editor {
     pub(super) fn overlay_rows_for(doc: &Document) -> Vec<(usize, String)> {
         let mut rows = Vec::new();
         for object in doc
-            .objects
+            .objects()
             .iter()
             .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
         {
@@ -129,9 +129,9 @@ impl Editor {
         id: usize,
         text: &str,
     ) -> egui::Rect {
-        let at = doc.objects[id - 1]
+        let at = doc.objects()[id - 1]
             .measurement_anchor
-            .or(doc.objects[id - 1].function_anchor)
+            .or(doc.objects()[id - 1].function_anchor)
             .map(|(x, y)| v.rect.min + egui::vec2(x as f32 + 2., y as f32 + 7.))
             .unwrap_or_else(|| v.rect.min + egui::vec2(12., 12. + row as f32 * 20.));
         let size = doc
@@ -160,7 +160,7 @@ impl Editor {
         let evaluated = self.evaluated_document();
         let doc = &*evaluated;
         // Action controls take clicks before caption and image bounding boxes.
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
                     | Kind::AnimationButton { label, anchor, .. }
@@ -175,7 +175,7 @@ impl Editor {
             return Some(object.id);
         }
         let radius = self.geometry_hit_radius();
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && doc.sampled_image_mesh(object.id, 1600).is_some_and(|mesh| {
                     mesh.triangles.into_iter().any(|triangle| {
@@ -188,7 +188,7 @@ impl Editor {
         }) {
             return Some(object.id);
         }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && doc
                     .cropped_image(object.id)
@@ -205,7 +205,7 @@ impl Editor {
         }) {
             return Some(object.id);
         }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && doc
                     .image_instances(object.id)
@@ -217,7 +217,7 @@ impl Editor {
         }) {
             return Some(object.id);
         }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && doc.text_content(object.id).is_some_and(|(text, rect)| {
                     let top_left = v.screen(Point {
@@ -280,7 +280,7 @@ impl Editor {
         }) {
             return Some(object.id);
         }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && doc.point_math_labels(object.id).is_some_and(|labels| {
                     let ctx = self
@@ -300,7 +300,7 @@ impl Editor {
         }) {
             return Some(object.id);
         }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && (crate::render::number_screen_rect_with_fonts(
                     v,
@@ -325,7 +325,7 @@ impl Editor {
             return Some(*id);
         }
         let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
+        if let Some(object) = doc.objects().iter().rev().find(|object| {
             doc.is_displayed(object.id)
                 && (crate::render::mapped_numeric_labels_hit(
                     v,
@@ -342,7 +342,7 @@ impl Editor {
         if let Some(id) = self.hit_point_in(doc, v, p) {
             return Some(id);
         }
-        doc.objects
+        doc.objects()
             .iter()
             .rev()
             .filter(|o| doc.is_displayed(o.id))

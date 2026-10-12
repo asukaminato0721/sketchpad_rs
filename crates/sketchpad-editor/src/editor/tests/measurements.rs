@@ -11,9 +11,9 @@ fn equation_command_accepts_parallel_perpendicular_and_axis_lines() {
         let host = editor.doc.add(kind);
         editor.selection_order = vec![host];
         editor.measure_value_equation(true);
-        let id = editor.doc.objects.last().unwrap().id;
+        let id = editor.doc.objects().last().unwrap().id;
         assert!(
-            matches!(editor.doc.objects[id-1].kind, Kind::ValueEquation { kind: ValueEquationKind::LineEquation, first, .. } if first == host)
+            matches!(editor.doc.objects()[id-1].kind, Kind::ValueEquation { kind: ValueEquationKind::LineEquation, first, .. } if first == host)
         );
         assert!(editor.doc.value_equation_value(id).is_some());
         assert!(
@@ -23,7 +23,7 @@ fn equation_command_accepts_parallel_perpendicular_and_axis_lines() {
         );
     }
     let frame = editor.doc.active_coordinate_system().unwrap();
-    let Kind::CoordinateSystem(x_axis, _) = editor.doc.objects[frame - 1].kind else {
+    let Kind::CoordinateSystem(x_axis, _) = editor.doc.objects()[frame - 1].kind else {
         panic!("Expected frame");
     };
     editor.selection_order = vec![x_axis];
@@ -31,14 +31,14 @@ fn equation_command_accepts_parallel_perpendicular_and_axis_lines() {
     assert!(
         editor
             .doc
-            .value_equation_value(editor.doc.objects.last().unwrap().id)
+            .value_equation_value(editor.doc.objects().last().unwrap().id)
             .is_some()
     );
     let bisector = editor.doc.add(Kind::Bisector(a, b, c));
     editor.selection_order = vec![bisector];
-    let count = editor.doc.objects.len();
+    let count = editor.doc.objects().len();
     editor.measure_value_equation(true);
-    assert_eq!(editor.doc.objects.len(), count);
+    assert_eq!(editor.doc.objects().len(), count);
 }
 
 #[test]
@@ -56,9 +56,9 @@ fn equation_command_accepts_constructed_and_transformed_circles() {
         let host = editor.doc.add(kind);
         editor.selection_order = vec![host];
         editor.measure_value_equation(true);
-        let id = editor.doc.objects.last().unwrap().id;
+        let id = editor.doc.objects().last().unwrap().id;
         assert!(
-            matches!(editor.doc.objects[id-1].kind, Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first, .. } if first == host)
+            matches!(editor.doc.objects()[id-1].kind, Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first, .. } if first == host)
         );
         assert!(editor.doc.value_equation_value(id).is_some());
         assert!(
@@ -68,9 +68,9 @@ fn equation_command_accepts_constructed_and_transformed_circles() {
         );
     }
     editor.selection_order = vec![segment];
-    let count = editor.doc.objects.len();
+    let count = editor.doc.objects().len();
     editor.measure_value_equation(true);
-    assert_eq!(editor.doc.objects.len(), count);
+    assert_eq!(editor.doc.objects().len(), count);
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn value_of_point_accepts_transformed_segment_and_circle_constraints() {
         let point = editor.doc.add(constrained);
         editor.selection_order = vec![point];
         editor.measure_value_equation(false);
-        let measurement = editor.doc.objects.last().unwrap().id;
+        let measurement = editor.doc.objects().last().unwrap().id;
         assert!((editor.doc.numeric_value(measurement).unwrap() - expected).abs() < 1e-12);
         assert!(
             !Document::from_bytes(&editor.doc.encode().unwrap(), None)
@@ -117,9 +117,9 @@ fn measure_slope_accepts_constructed_and_transformed_lines() {
         let host = editor.doc.add(kind);
         editor.selection_order = vec![host];
         editor.measure_slope();
-        let id = editor.doc.objects.last().unwrap().id;
+        let id = editor.doc.objects().last().unwrap().id;
         assert!(
-            matches!(editor.doc.objects[id - 1].kind, Kind::SlopeMeasurement(parent, _) if parent == host)
+            matches!(editor.doc.objects()[id - 1].kind, Kind::SlopeMeasurement(parent, _) if parent == host)
         );
         assert!(editor.doc.slope_value(id).is_some());
         assert!(
@@ -129,9 +129,9 @@ fn measure_slope_accepts_constructed_and_transformed_lines() {
         );
     }
     editor.selection_order = vec![a];
-    let count = editor.doc.objects.len();
+    let count = editor.doc.objects().len();
     editor.measure_slope();
-    assert_eq!(editor.doc.objects.len(), count);
+    assert_eq!(editor.doc.objects().len(), count);
     assert!(editor.status.contains("straight object"));
 }
 
@@ -150,7 +150,7 @@ fn measure_distance_accepts_point_and_straight_object_in_either_order() {
         };
         editor.measure_distance();
         assert_eq!(
-            editor.doc.objects.last().unwrap().kind,
+            editor.doc.objects().last().unwrap().kind,
             Kind::PointLineDistance(point, host)
         );
         assert_eq!(
@@ -193,9 +193,9 @@ fn polygon_value_command_accepts_constraints_and_independent_points_in_both_orde
             _ => vec![point],
         };
         editor.measure_value_equation(false);
-        let measurement = editor.doc.objects.last().unwrap().id;
+        let measurement = editor.doc.objects().last().unwrap().id;
         assert!(
-            matches!(editor.doc.objects[measurement-1].kind,
+            matches!(editor.doc.objects()[measurement-1].kind,
             Kind::ValueEquation{kind:ValueEquationKind::PointValue,first,second} if first==point&&second==polygon),
             "selection {selection}, status {}",
             editor.status
@@ -207,7 +207,7 @@ fn polygon_value_command_accepts_constraints_and_independent_points_in_both_orde
         assert!(!reopened.partial_view);
         assert_eq!(reopened.encode().unwrap(), bytes);
         editor.doc.undo();
-        assert_eq!(editor.doc.objects.len(), measurement - 1);
+        assert_eq!(editor.doc.objects().len(), measurement - 1);
         editor.doc.redo();
         assert_eq!(editor.doc.encode().unwrap(), bytes);
     }
@@ -220,7 +220,7 @@ fn axis_point_command_creation_drag_and_value_use_the_same_native_parameter() {
         .doc
         .add_default_coordinate_system(Point { x: 240., y: 260. })
         .unwrap();
-    let Kind::CoordinateSystem(axis, _) = editor.doc.objects[frame - 1].kind else {
+    let Kind::CoordinateSystem(axis, _) = editor.doc.objects()[frame - 1].kind else {
         panic!()
     };
     let point = editor.doc.add(
@@ -231,7 +231,7 @@ fn axis_point_command_creation_drag_and_value_use_the_same_native_parameter() {
     );
     editor.selection_order = vec![point];
     editor.measure_value_equation(false);
-    let measurement = editor.doc.objects.last().unwrap().id;
+    let measurement = editor.doc.objects().last().unwrap().id;
     assert!(matches!(editor.doc.value_equation_value(measurement),
         Some(sketchpad_engine::value_equation_records::EquationValue::PointValue(t)) if (t-0.875).abs()<1e-12));
     editor.doc.checkpoint();
@@ -252,9 +252,9 @@ fn attached_numeric_label_command_accepts_measurement_units_and_live_edits() {
     let distance = editor.doc.add(Kind::PointDistance(a, b));
     editor.doc.selected = [a, distance].into_iter().collect();
     editor.attach_numeric_label_selected();
-    let label = editor.doc.objects.last().unwrap().id;
+    let label = editor.doc.objects().last().unwrap().id;
     assert!(
-        matches!(editor.doc.objects[label-1].kind, Kind::PointNumericLabel(point, value) if point == a && value == distance)
+        matches!(editor.doc.objects()[label-1].kind, Kind::PointNumericLabel(point, value) if point == a && value == distance)
     );
     assert!(
         editor
@@ -273,7 +273,7 @@ fn attached_numeric_label_command_accepts_measurement_units_and_live_edits() {
     editor.doc.undo();
     assert_eq!(editor.doc.point_numeric_label(label).unwrap().1, before);
     editor.doc.selected = [a, b].into_iter().collect();
-    let count = editor.doc.objects.len();
+    let count = editor.doc.objects().len();
     editor.attach_numeric_label_selected();
-    assert_eq!(editor.doc.objects.len(), count);
+    assert_eq!(editor.doc.objects().len(), count);
 }

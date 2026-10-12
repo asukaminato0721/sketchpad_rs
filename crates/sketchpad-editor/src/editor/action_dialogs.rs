@@ -12,9 +12,9 @@ pub(super) fn animation_settings_ui(
     target: usize,
     settings: &mut AnimationSettings,
 ) {
-    let free = matches!(doc.objects[target - 1].kind, Kind::Free(_));
-    let parameter = matches!(doc.objects[target - 1].kind, Kind::Parameter(_));
-    let circle = matches!(doc.objects[target - 1].kind, Kind::PointOnCircle(_, _, _));
+    let free = matches!(doc.objects()[target - 1].kind, Kind::Free(_));
+    let parameter = matches!(doc.objects()[target - 1].kind, Kind::Parameter(_));
+    let circle = matches!(doc.objects()[target - 1].kind, Kind::PointOnCircle(_, _, _));
     ui.label(tr(format!(
         "Animate {} {target}",
         if parameter { "parameter" } else { "point" }
@@ -238,7 +238,7 @@ pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut Li
             if draft.target_button_ordinal.is_some()
                 || destination_buttons
                     .iter()
-                    .any(|id| matches!(doc.objects[id - 1].kind, Kind::HideShowButton { .. }))
+                    .any(|id| matches!(doc.objects()[id - 1].kind, Kind::HideShowButton { .. }))
             {
                 egui::ComboBox::from_id_salt("link_target_button")
                     .selected_text(tr(match draft.target_button_ordinal {
@@ -252,7 +252,7 @@ pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut Li
                             tr("No button on page"),
                         );
                         for (index, id) in destination_buttons.iter().enumerate() {
-                            let label = match &doc.objects[id - 1].kind {
+                            let label = match &doc.objects()[id - 1].kind {
                                 Kind::HideShowButton { label, .. } => label.as_str(),
                                 _ => continue,
                             };

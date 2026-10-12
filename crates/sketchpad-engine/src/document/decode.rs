@@ -3421,6 +3421,7 @@ impl Document {
             custom_transform_definitions,
             safe_structure: safe,
             image_read_only,
+            history_suspended: false,
             undo: Vec::new(),
             redo: Vec::new(),
         };

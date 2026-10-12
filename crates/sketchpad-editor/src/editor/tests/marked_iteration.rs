@@ -25,7 +25,7 @@ fn scalar_values_can_be_marked_for_point_and_shape_dilation() {
         editor.dilate_selected();
         let image = *editor.doc.selected.iter().next().unwrap();
         assert_eq!(
-            editor.doc.objects[image - 1].kind,
+            editor.doc.objects()[image - 1].kind,
             match family {
                 0 => Kind::CalculatedRatioScaledPoint(source, 2, 1),
                 1 => Kind::CalculatedRatioScaledSegment(source, 2, 1),
@@ -85,7 +85,7 @@ fn selected_shapes_rotate_by_marked_numeric_angles() {
         editor.rotate_selected();
         let transformed = *editor.doc.selected.iter().next().unwrap();
         assert_eq!(
-            editor.doc.objects[transformed - 1].kind,
+            editor.doc.objects()[transformed - 1].kind,
             match family {
                 0 => Kind::CalculatedAngleRotatedSegment(source, 1, 5),
                 1 => Kind::CalculatedAngleRotatedCircle(source, 1, 5),
@@ -110,7 +110,7 @@ fn selected_shapes_rotate_by_marked_numeric_angles() {
             editor.measure_length();
             let measurement = *editor.doc.selected.iter().next().unwrap();
             assert_eq!(
-                editor.doc.objects[measurement - 1].kind,
+                editor.doc.objects()[measurement - 1].kind,
                 Kind::SegmentLength(transformed)
             );
         }
@@ -147,7 +147,7 @@ fn measured_angle_and_arc_angle_can_be_marked_and_iterated() {
         editor.rotate_selected();
         let image = *editor.doc.selected.iter().next().unwrap();
         assert_eq!(
-            editor.doc.objects[image - 1].kind,
+            editor.doc.objects()[image - 1].kind,
             Kind::CalculatedAngleRotatedPoint(seed, center, angle)
         );
         editor.selection_order = vec![seed, image];
@@ -186,7 +186,7 @@ fn selected_marked_images_create_live_geometry_iterations() {
         editor.iterate_selected(3);
         let iteration = *editor.doc.selected.iter().next().unwrap();
         assert!(matches!(
-            editor.doc.objects[iteration - 1].kind,
+            editor.doc.objects()[iteration - 1].kind,
             Kind::PointIteration(..)
         ));
         assert_eq!(
@@ -259,7 +259,7 @@ fn selected_dilated_image_creates_point_and_circle_iterations() {
     editor.iterate_selected(3);
     let binding = editor
         .doc
-        .objects
+        .objects()
         .iter()
         .find(|o| matches!(o.kind, Kind::IterationBinding(source, _) if source == circle))
         .unwrap()

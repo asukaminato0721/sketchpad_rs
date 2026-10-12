@@ -14,7 +14,7 @@ impl Editor {
         }
         let mut families = self
             .doc
-            .objects
+            .objects()
             .iter()
             .filter(|object| !object.deleted)
             // Source font families are collected together below. Resolving each

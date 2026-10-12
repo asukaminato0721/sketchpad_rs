@@ -30,7 +30,7 @@ fn curve_intersection_command_normalizes_roles_and_creates_every_ranked_crossing
         assert_eq!(e.selection_order, vec![12, 13, 14]);
         for (rank, (id, x)) in [12, 13, 14].into_iter().zip([-1., 0., 1.]).enumerate() {
             assert_eq!(
-                e.doc.objects[id - 1].kind,
+                e.doc.objects()[id - 1].kind,
                 Kind::CurveIntersection(11, 8, rank as u32)
             );
             assert!(

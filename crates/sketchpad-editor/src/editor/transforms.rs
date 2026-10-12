@@ -5,7 +5,7 @@ impl Editor {
     fn append_transformed_selection(&mut self, source: usize, kind: Kind) {
         let element = self
             .doc
-            .objects
+            .objects()
             .get(source.saturating_sub(1))
             .and_then(|object| {
                 use sketchpad_engine::document::transform_model::ElementType;
@@ -58,8 +58,8 @@ impl Editor {
             return;
         }
         let source = self.selection_order[0];
-        let source_is_arc = self.doc.objects[source - 1].kind.is_arc();
-        let source_is_unbounded_straight = self.doc.objects[source - 1]
+        let source_is_arc = self.doc.objects()[source - 1].kind.is_arc();
+        let source_is_unbounded_straight = self.doc.objects()[source - 1]
             .kind
             .fixed_transform_straight_mode()
             .is_some()
@@ -70,21 +70,21 @@ impl Editor {
             );
         let source_is_segment = matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
             Some(Kind::Segment(_, _))
         );
         let source_is_circle = matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
             Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
         );
         let source_is_polygon = matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
@@ -197,7 +197,7 @@ impl Editor {
                 if !self.translation_angle.is_finite()
                     || self
                         .doc
-                        .objects
+                        .objects()
                         .get(distance.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                     || self.doc.marked_distance_value_pixels(distance).is_none()
@@ -222,7 +222,7 @@ impl Editor {
                 };
                 if [horizontal, vertical].iter().any(|&id| {
                     self.doc
-                        .objects
+                        .objects()
                         .get(id.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                         || self.doc.marked_distance_value_pixels(id).is_none()
@@ -261,7 +261,7 @@ impl Editor {
                 if !fixed_cm.is_finite()
                     || self
                         .doc
-                        .objects
+                        .objects()
                         .get(distance.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                     || self.doc.marked_distance_value_pixels(distance).is_none()
@@ -306,7 +306,7 @@ impl Editor {
                 };
                 if [start, end].iter().any(|&id| {
                     self.doc
-                        .objects
+                        .objects()
                         .get(id.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                         || self.doc.position(id).is_none()
@@ -351,7 +351,7 @@ impl Editor {
         };
         if self
             .doc
-            .objects
+            .objects()
             .get(mirror - 1)
             .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
         {
@@ -365,12 +365,12 @@ impl Editor {
         let kind = if self.doc.position(source).is_some() {
             Kind::ReflectedPoint(source, mirror)
         } else if self.doc.circle_points(source).is_some()
-            || self.doc.objects[source - 1].kind.is_arc()
+            || self.doc.objects()[source - 1].kind.is_arc()
         {
             Kind::ReflectedCircle(source, mirror)
         } else if self
             .doc
-            .objects
+            .objects()
             .get(source.saturating_sub(1))
             .is_some_and(|object| object.kind.fixed_transform_straight_mode().is_some())
             && self.doc.line_points(source).is_some()
@@ -379,7 +379,7 @@ impl Editor {
             Kind::ReflectedSegment(source, mirror)
         } else if matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if kind.is_segment()
@@ -387,7 +387,7 @@ impl Editor {
             Kind::ReflectedSegment(source, mirror)
         } else if matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
@@ -457,7 +457,7 @@ impl Editor {
                 self.translation_mode = TranslationMode::MarkedDistance;
                 self.doc.selected.remove(id);
                 self.selection_order.retain(|selected| selected != id);
-                self.status = if self.doc.objects[*id - 1].kind.numeric_unit()
+                self.status = if self.doc.objects()[*id - 1].kind.numeric_unit()
                     == Some(sketchpad_engine::table_records::NumericUnit::Scalar)
                 {
                     format!("Marked distance value {id} (using centimeters)")
@@ -482,7 +482,7 @@ impl Editor {
     }
     pub(super) fn mark_angle_selected(&mut self) {
         if let [id] = self.selection_order.as_slice()
-            && self.doc.objects[*id - 1].kind.numeric_unit().is_some()
+            && self.doc.objects()[*id - 1].kind.numeric_unit().is_some()
             && self.doc.numeric_value(*id).is_some()
         {
             let id = *id;
@@ -526,7 +526,7 @@ impl Editor {
     }
     pub(super) fn mark_ratio_selected(&mut self) {
         if let [id] = self.selection_order.as_slice()
-            && self.doc.objects[*id - 1].kind.numeric_unit().is_some()
+            && self.doc.objects()[*id - 1].kind.numeric_unit().is_some()
             && self.doc.numeric_value(*id).is_some()
         {
             let id = *id;
@@ -609,7 +609,7 @@ impl Editor {
         };
         if self
             .doc
-            .objects
+            .objects()
             .get(center - 1)
             .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
         {
@@ -644,7 +644,7 @@ impl Editor {
             };
             if [origin, base, target].iter().any(|&id| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(id.saturating_sub(1))
                     .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                     || self.doc.position(id).is_none()
@@ -656,12 +656,12 @@ impl Editor {
             if self.doc.position(source).is_some() {
                 Kind::RatioScaledPoint(source, center, origin, base, target)
             } else if self.doc.circle_points(source).is_some()
-                || self.doc.objects[source - 1].kind.is_arc()
+                || self.doc.objects()[source - 1].kind.is_arc()
             {
                 Kind::RatioScaledCircle(source, center, origin, base, target)
             } else if matches!(
                 self.doc
-                    .objects
+                    .objects()
                     .get(source.saturating_sub(1))
                     .map(|o| &o.kind),
                 Some(Kind::Segment(_, _))
@@ -669,7 +669,7 @@ impl Editor {
                 Kind::RatioScaledSegment(source, center, origin, base, target)
             } else if matches!(
                 self.doc
-                    .objects
+                    .objects()
                     .get(source.saturating_sub(1))
                     .map(|o| &o.kind),
                 Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
@@ -683,30 +683,30 @@ impl Editor {
         } else if self.doc.position(source).is_some() {
             Kind::ScaledPoint(source, center, self.dilation_factor)
         } else if self.doc.circle_points(source).is_some()
-            || self.doc.objects[source - 1].kind.is_arc()
+            || self.doc.objects()[source - 1].kind.is_arc()
         {
             Kind::ScaledCircle(source, center, self.dilation_factor)
         } else if matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if kind.is_segment()
         ) {
             Kind::ScaledSegment(source, center, self.dilation_factor)
         } else if matches!(
-            self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
+            self.doc.objects().get(source.saturating_sub(1)).map(|o| &o.kind),
             Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray)
         ) {
             Kind::ScaledRay(source, center, self.dilation_factor)
         } else if matches!(
-            self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
+            self.doc.objects().get(source.saturating_sub(1)).map(|o| &o.kind),
             Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Line)
         ) {
             Kind::ScaledLine(source, center, self.dilation_factor)
         } else if matches!(
             self.doc
-                .objects
+                .objects()
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
@@ -746,7 +746,7 @@ impl Editor {
         };
         if self
             .doc
-            .objects
+            .objects()
             .get(center - 1)
             .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
         {
@@ -755,7 +755,7 @@ impl Editor {
         }
         let source_kind = self
             .doc
-            .objects
+            .objects()
             .get(source.saturating_sub(1))
             .map(|o| &o.kind);
         let source_arc = source_kind.is_some_and(|kind| kind.is_arc())
@@ -825,7 +825,7 @@ impl Editor {
             };
             if [first, vertex, last].iter().any(|&id| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(id.saturating_sub(1))
                     .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
                     || self.doc.position(id).is_none()

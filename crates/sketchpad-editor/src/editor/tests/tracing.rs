@@ -6,7 +6,7 @@ fn chord_scan_button_retains_curve_history() {
     let bytes = include_bytes!("../../../../../tests/fixtures/chord_scan_original.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();
     assert_eq!(doc.encode().unwrap(), bytes);
-    assert!(doc.objects[55].tracing);
+    assert!(doc.objects()[55].tracing);
     let mut editor = Editor::new(doc);
     let expected = editor.doc.sampled_mapped_styled_strokes(56, 384).unwrap();
     assert_eq!(expected.len(), 384);
@@ -52,10 +52,16 @@ fn chord_scan_button_retains_curve_history() {
     editor.capture_traces();
     assert_eq!(editor.trace_marks.len(), 1);
 
-    editor.doc.objects.edit(55).visible = false;
+    editor
+        .doc
+        .edit_object(56, |object| object.visible = false)
+        .unwrap();
     editor.capture_traces();
     assert_eq!(editor.trace_marks.len(), 1);
-    editor.doc.objects.edit(55).visible = true;
+    editor
+        .doc
+        .edit_object(56, |object| object.visible = true)
+        .unwrap();
     editor.doc.active_page = 1;
     editor.capture_traces();
     assert_eq!(editor.trace_marks.len(), 1);

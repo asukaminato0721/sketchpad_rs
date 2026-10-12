@@ -29,8 +29,14 @@ fn arc_intersection_commands_match_native_branch_order_and_live_domains() {
         e.doc.selected = order.into_iter().collect();
         e.intersection();
         assert_eq!(e.selection_order, vec![8, 9]);
-        assert_eq!(e.doc.objects[7].kind, Kind::LineCircleIntersection(7, 6, 1));
-        assert_eq!(e.doc.objects[8].kind, Kind::LineCircleIntersection(7, 6, 0));
+        assert_eq!(
+            e.doc.objects()[7].kind,
+            Kind::LineCircleIntersection(7, 6, 1)
+        );
+        assert_eq!(
+            e.doc.objects()[8].kind,
+            Kind::LineCircleIntersection(7, 6, 0)
+        );
         let right = Point {
             x: 200. + 30. * 3f64.sqrt(),
             y: 170.,
@@ -77,11 +83,11 @@ fn arc_intersection_commands_match_native_branch_order_and_live_domains() {
         e.doc.selected = order.into_iter().collect();
         e.intersection();
         assert_eq!(
-            e.doc.objects[7].kind,
+            e.doc.objects()[7].kind,
             Kind::CircleCircleIntersection(order[0], order[1], 1)
         );
         assert_eq!(
-            e.doc.objects[8].kind,
+            e.doc.objects()[8].kind,
             Kind::CircleCircleIntersection(order[0], order[1], 0)
         );
         let first = e.doc.position(8).unwrap();
@@ -105,7 +111,7 @@ fn arc_intersection_commands_match_native_branch_order_and_live_domains() {
     single.intersection();
     assert_eq!(single.selection_order, vec![8]);
     assert_eq!(
-        single.doc.objects[7].kind,
+        single.doc.objects()[7].kind,
         Kind::CircleCircleIntersection(6, 7, 1)
     );
 

@@ -92,7 +92,7 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
             }
             let image = *editor.doc.selected.iter().next().unwrap();
             assert_ne!(image, source, "operation{operation}: {}", editor.status);
-            let definition = editor.doc.objects[image - 1]
+            let definition = editor.doc.objects()[image - 1]
                 .kind
                 .transform_definition()
                 .unwrap();
@@ -103,15 +103,18 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
                 [21, 17, 24, 20, 18, 19, 16, 34, 27, 28, 29, 30, 32, 33][operation]
             );
             assert_eq!(
-                editor.doc.objects[image - 1].visual_style,
-                editor.doc.objects[source - 1].visual_style
+                editor.doc.objects()[image - 1].visual_style,
+                editor.doc.objects()[source - 1].visual_style
             );
             editor.doc.verify_roundtrip().unwrap();
             editor.doc.undo();
             assert_eq!(editor.doc.encode().unwrap(), before);
             editor.doc.redo();
-            for mut object in editor.doc.objects.iter_mut() {
-                object.visible = object.id == image;
+            for id in 1..=editor.doc.objects().len() {
+                editor
+                    .doc
+                    .edit_object(id, |object| object.visible = id == image)
+                    .unwrap();
             }
             if element != ElementType::Arc {
                 let outline = editor.doc.filled_region_points(image).unwrap();
@@ -154,7 +157,7 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
             editor.point_on_object();
             let point = *editor.doc.selected.iter().next().unwrap();
             assert!(
-                matches!(editor.doc.objects[point - 1].kind, Kind::PointOnArc(host, _) if host == image)
+                matches!(editor.doc.objects()[point - 1].kind, Kind::PointOnArc(host, _) if host == image)
             );
             editor.select_only(image);
             editor.measure_arc_angle();

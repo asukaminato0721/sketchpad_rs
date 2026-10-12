@@ -1,6 +1,73 @@
-use super::{Document, DocumentSnapshot};
+use super::{Document, DocumentSnapshot, Object, ObjectStore};
 
 impl Document {
+    pub fn objects(&self) -> &ObjectStore {
+        &self.objects
+    }
+
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
+    pub fn redo_len(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// Apply one operation to an isolated candidate. Failure leaves this document
+    /// unchanged. Nested operations share the outer operation's undo record.
+    pub fn transaction<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Document) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut candidate = self.clone();
+        candidate.refresh_measurement_names();
+        candidate.history_suspended = true;
+        candidate.dirty = true;
+        let result = edit(&mut candidate)?;
+        candidate.history_suspended = self.history_suspended;
+        if !self.history_suspended {
+            let mut snapshot = self.snapshot();
+            if candidate.original != self.original
+                || candidate.source_count != self.source_count
+                || candidate.image_read_only != self.image_read_only
+            {
+                snapshot.source = Some((
+                    self.original.clone(),
+                    self.source_count,
+                    self.image_read_only,
+                ));
+            }
+            candidate.undo = self.undo.clone();
+            candidate.undo.push(snapshot);
+            candidate.redo.clear();
+        }
+        candidate.dirty = true;
+        *self = candidate;
+        Ok(result)
+    }
+
+    /// Edit one object by its positive ID. Object identity cannot change.
+    /// Native save validation still determines which constructions can be saved.
+    pub fn edit_object(&mut self, id: usize, edit: impl FnOnce(&mut Object)) -> Result<(), String> {
+        let slot = id.checked_sub(1).ok_or("Invalid object ID")?;
+        let mut object = self
+            .objects
+            .get(slot)
+            .ok_or("Object does not exist")?
+            .clone();
+        edit(&mut object);
+        if object.id != id {
+            return Err("An object edit cannot change its ID".into());
+        }
+        if object == self.objects[slot] {
+            return Ok(());
+        }
+        self.checkpoint();
+        *self.objects.edit(slot) = object;
+        self.dirty = true;
+        Ok(())
+    }
+
     fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             objects: self.objects.clone(),
@@ -56,12 +123,19 @@ impl Document {
     }
     pub fn checkpoint(&mut self) {
         self.refresh_measurement_names();
+        self.dirty = true;
+        if self.history_suspended {
+            return;
+        }
         self.undo.push(self.snapshot());
         self.redo.clear();
-        self.dirty = true;
     }
     pub(super) fn checkpoint_structure(&mut self) {
         self.refresh_measurement_names();
+        self.dirty = true;
+        if self.history_suspended {
+            return;
+        }
         let mut snapshot = self.snapshot();
         snapshot.source = Some((
             self.original.clone(),
@@ -70,7 +144,6 @@ impl Document {
         ));
         self.undo.push(snapshot);
         self.redo.clear();
-        self.dirty = true;
     }
     pub fn undo(&mut self) {
         if let Some(snapshot) = self.undo.pop() {

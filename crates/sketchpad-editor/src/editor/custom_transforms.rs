@@ -48,7 +48,7 @@ impl Editor {
         if self.doc.position(replacement).is_none()
             || self
                 .doc
-                .objects
+                .objects()
                 .get(replacement.saturating_sub(1))
                 .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
         {

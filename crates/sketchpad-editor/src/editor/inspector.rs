@@ -88,7 +88,7 @@ struct DependencyGraph {
 impl DependencyGraph {
     fn new(doc: &Document) -> Self {
         let mut nodes = BTreeMap::new();
-        for object in doc.objects.iter().filter(|object| !object.deleted) {
+        for object in doc.objects().iter().filter(|object| !object.deleted) {
             let kind = match &object.kind {
                 Kind::Free(_) => "Free Point",
                 Kind::Midpoint(..) => "Midpoint",
@@ -657,7 +657,7 @@ impl Editor {
                     self.inspector_center(id);
                 }
                 if ui.button(tr("Properties…")).clicked() {
-                    self.properties_dialog = Some(id);
+                    self.dialogs.properties_dialog = Some(id);
                 }
             });
         }
@@ -667,7 +667,7 @@ impl Editor {
         let Some(object) = pick
             .id
             .checked_sub(1)
-            .and_then(|index| self.doc.objects.get(index))
+            .and_then(|index| self.doc.objects().get(index))
         else {
             return;
         };
@@ -726,7 +726,7 @@ impl Editor {
             })
             .or_else(|| {
                 evaluated
-                    .objects
+                    .objects()
                     .get(id.saturating_sub(1))
                     .and_then(|object| match &object.kind {
                         Kind::PlainText { rect, .. } => Some(Point {
@@ -881,7 +881,7 @@ mod tests {
     fn egui_groups_expand_select_filter_and_reveal_without_document_edits() {
         let mut editor = tool_editor();
         let before = editor.doc.encode().unwrap();
-        let history = editor.doc.undo.len();
+        let history = editor.doc.undo_len();
         let ctx = egui::Context::default();
         let graph = DependencyGraph::new(&editor.doc);
         let title = graph.tool_title(&graph.tools.groups[0]);
@@ -917,7 +917,7 @@ mod tests {
         assert!(!has_text(&output, &title));
         text_center(&output, &object_title);
         assert_eq!(editor.doc.encode().unwrap(), before);
-        assert_eq!(editor.doc.undo.len(), history);
+        assert_eq!(editor.doc.undo_len(), history);
 
         editor.language = super::super::i18n::Language::Chinese;
         output = frame(&mut editor, &ctx, vec![]);
@@ -940,7 +940,7 @@ mod tests {
         let doc = Document::from_bytes(&bytes, None).unwrap();
         eprintln!(
             "Sample: {} objects, {} pages",
-            doc.objects.len(),
+            doc.objects().len(),
             doc.page_count
         );
         let start = std::time::Instant::now();
@@ -1020,8 +1020,14 @@ mod tests {
     #[test]
     fn graph_omits_deleted_objects_but_keeps_hidden_sources() {
         let mut editor = editor();
-        editor.doc.objects.edit(0).visible = false;
-        editor.doc.objects.edit(1).deleted = true;
+        editor
+            .doc
+            .edit_object(1, |object| object.visible = false)
+            .unwrap();
+        editor
+            .doc
+            .edit_object(2, |object| object.deleted = true)
+            .unwrap();
         let graph = DependencyGraph::new(&editor.doc);
         assert!(graph.nodes[&1].hidden);
         assert!(!graph.nodes.contains_key(&2));
@@ -1039,9 +1045,13 @@ mod tests {
         let evaluated = editor.evaluated_document();
         assert!(Arc::ptr_eq(&original, &editor.inspector.graph(evaluated)));
 
-        editor.doc.checkpoint();
-        editor.doc.objects.edit(0).visible = false;
-        editor.doc.objects.edit(2).kind = Kind::Midpoint(1, 1);
+        editor
+            .doc
+            .transaction(|doc| {
+                doc.edit_object(1, |object| object.visible = false)?;
+                doc.edit_object(3, |object| object.kind = Kind::Midpoint(1, 1))
+            })
+            .unwrap();
         let evaluated = editor.evaluated_document();
         let changed = editor.inspector.graph(evaluated);
         assert!(changed.nodes[&1].hidden);
@@ -1058,7 +1068,7 @@ mod tests {
         editor.doc.set_point_label(1, "Renamed", true).unwrap();
         let evaluated = editor.evaluated_document();
         assert_eq!(editor.inspector.graph(evaluated).nodes[&1].name, "Renamed");
-        editor.doc.objects.edit(0).page = 1;
+        editor.doc.edit_object(1, |object| object.page = 1).unwrap();
         let evaluated = editor.evaluated_document();
         assert_eq!(editor.inspector.graph(evaluated).nodes[&1].page, 1);
 
@@ -1131,9 +1141,13 @@ mod tests {
     #[test]
     fn picking_uses_original_ids_and_does_not_edit_or_unhide_objects() {
         let mut editor = editor();
-        editor.doc.objects.edit(0).visible = false;
+        editor
+            .doc
+            .edit_object(1, |object| object.visible = false)
+            .unwrap();
+        editor.doc.dirty = false;
         let before = editor.doc.encode().unwrap();
-        let history = editor.doc.undo.len();
+        let history = editor.doc.undo_len();
         editor.inspector_pick(Pick {
             id: 3,
             multi: false,
@@ -1148,7 +1162,7 @@ mod tests {
             center: false,
         });
         assert_eq!(editor.selection_order, vec![3, 1]);
-        assert!(!editor.doc.objects[0].visible);
+        assert!(!editor.doc.objects()[0].visible);
         editor.inspector_pick(Pick {
             id: 3,
             multi: true,
@@ -1163,7 +1177,7 @@ mod tests {
             });
         }
         assert_eq!(editor.selection_order, vec![1]);
-        assert_eq!(editor.doc.undo.len(), history);
+        assert_eq!(editor.doc.undo_len(), history);
         assert_eq!(editor.doc.encode().unwrap(), before);
         assert!(!editor.doc.dirty);
     }
@@ -1274,20 +1288,16 @@ mod tests {
     #[test]
     fn large_lists_only_layout_visible_rows_and_reveal_distant_selections() {
         let mut doc = Document::new();
-        doc.add(Kind::Free(Point { x: 0., y: 0. }));
-        let prototype = doc.objects[0].clone();
-        doc.objects = (1..=4071)
-            .map(|id| {
-                let mut object = prototype.clone();
-                object.id = id;
-                object.kind = Kind::Free(Point {
+        doc.transaction(|doc| {
+            for id in 1..=4071 {
+                doc.add(Kind::Free(Point {
                     x: id as f64,
                     y: 0.,
-                });
-                object
-            })
-            .collect::<Vec<_>>()
-            .into();
+                }));
+            }
+            Ok(())
+        })
+        .unwrap();
         let mut editor = Editor::new(doc);
         let ctx = egui::Context::default();
         super::super::chrome::apply_style(&ctx);

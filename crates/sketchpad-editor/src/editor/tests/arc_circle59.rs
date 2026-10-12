@@ -13,13 +13,13 @@ fn arc_on_circle_command_preserves_general_endpoint_identity_and_live_radius() {
     e.arc_on_circle();
     let arc = *e.doc.selected.iter().next().unwrap();
     assert_eq!(
-        e.doc.objects[arc - 1].kind,
+        e.doc.objects()[arc - 1].kind,
         Kind::ArcOnCircle(circle, start, end),
         "{}",
         e.status
     );
     assert_eq!(
-        e.doc.objects[start - 1].kind,
+        e.doc.objects()[start - 1].kind,
         Kind::Free(Point { x: 410., y: 260. })
     );
     let point = e.doc.add(Kind::PointOnArc(arc, 0.5));
@@ -40,14 +40,14 @@ fn arc_on_circle_command_preserves_general_endpoint_identity_and_live_radius() {
     );
     e.doc.undo();
     assert!(e.doc.position(point).unwrap().distance(expected) < 1e-8);
-    let count = e.doc.objects.len();
+    let count = e.doc.objects().len();
     e.selection_order = vec![start, circle, end];
     e.arc_on_circle();
-    assert_eq!(e.doc.objects.len(), count);
+    assert_eq!(e.doc.objects().len(), count);
     e.select_only(circle);
     e.clear_selected();
-    assert!(e.doc.objects[arc - 1].deleted);
-    assert!(e.doc.objects[point - 1].deleted);
+    assert!(e.doc.objects()[arc - 1].deleted);
+    assert!(e.doc.objects()[point - 1].deleted);
     e.doc.undo();
     assert!(e.doc.position(point).is_some());
 }

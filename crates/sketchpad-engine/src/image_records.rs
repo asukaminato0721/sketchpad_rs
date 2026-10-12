@@ -454,31 +454,17 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     if bytes.get(..4) != Some(b"GSP4") {
         return Err("Expected a GSP4 document".into());
     }
-    let mut at = 4usize;
-    let mut records = Vec::new();
-    while at < bytes.len() {
-        if bytes.len() - at < 8 {
-            return Err("Truncated GSP record header".into());
-        }
-        let len = u32_at(bytes, at) as usize;
-        let kind = u32_at(bytes, at + 4);
-        let start = at.checked_add(8).ok_or("GSP record offset overflow")?;
-        let payload_end = start.checked_add(len).ok_or("GSP record length overflow")?;
-        let end = payload_end
-            .checked_add(len % 2)
-            .ok_or("GSP padding overflow")?;
-        if end > bytes.len() {
-            return Err("Truncated GSP record payload".into());
-        }
-        records.push(Record {
-            start: at,
-            kind,
-            payload: start..payload_end,
-            end,
-        });
-        at = end;
-    }
-    Ok(records)
+    sketchpad_format::records_from(bytes, 4).map(|records| {
+        records
+            .into_iter()
+            .map(|record| Record {
+                kind: record.kind,
+                start: record.start,
+                end: record.end,
+                payload: record.data,
+            })
+            .collect()
+    })
 }
 
 fn png_dimensions(png: &[u8]) -> Result<(u32, u32), String> {

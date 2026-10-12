@@ -10,7 +10,7 @@ impl Editor {
     pub(super) fn capture_traces(&mut self) {
         for object in self
             .doc
-            .objects
+            .objects()
             .iter()
             .filter(|o| o.tracing && o.visible && !o.deleted && o.page == self.doc.active_page)
         {
@@ -138,7 +138,7 @@ impl Editor {
         }
     }
     fn animation_track(&self, id: usize, allow_hidden: bool) -> Option<AnimationTrack> {
-        let object = self.doc.objects.get(id.checked_sub(1)?)?;
+        let object = self.doc.objects().get(id.checked_sub(1)?)?;
         if object.deleted || !allow_hidden && !object.visible || object.page != self.doc.active_page
         {
             return None;
@@ -323,7 +323,7 @@ impl Editor {
         }
         let Some(object) = id
             .checked_sub(1)
-            .and_then(|index| self.doc.objects.get(index))
+            .and_then(|index| self.doc.objects().get(index))
         else {
             return;
         };
@@ -359,7 +359,7 @@ impl Editor {
         let source_kind = match self.selection_order.as_slice() {
             [id] => self
                 .doc
-                .objects
+                .objects()
                 .get(id.checked_sub(1)?)
                 .map(|object| &object.kind),
             _ => None,
@@ -418,7 +418,7 @@ impl Editor {
                     1.
                 };
                 if let Some(parameter) = setting.parameter
-                    && let Kind::Parameter(group) = &self.doc.objects[target - 1].kind
+                    && let Kind::Parameter(group) = &self.doc.objects()[target - 1].kind
                 {
                     let scale = group.native_unit_scale();
                     let (min, max) = (
@@ -512,7 +512,7 @@ impl Editor {
             .map(|track| track.id)
             .collect::<Vec<_>>();
         tracks.retain_mut(|track| {
-            let Some(object) = self.doc.objects.get(track.id - 1) else {
+            let Some(object) = self.doc.objects().get(track.id - 1) else {
                 return false;
             };
             if object.deleted

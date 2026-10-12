@@ -20,8 +20,8 @@ impl Editor {
         }
         let (a, b) = (ids[0], ids[1]);
         if a == b
-            || self.doc.objects[a - 1].page != self.doc.active_page
-            || self.doc.objects[b - 1].page != self.doc.active_page
+            || self.doc.objects()[a - 1].page != self.doc.active_page
+            || self.doc.objects()[b - 1].page != self.doc.active_page
             || self.doc.page_count > 1
                 && self
                     .doc
@@ -33,25 +33,28 @@ impl Editor {
             self.status = "Select two distinct points on the current page".into();
             return;
         }
-        let kind = match mode {
-            0 => Kind::Segment(a, b),
-            1 => Kind::Circle(a, b),
-            3 => Kind::Line(a, b),
-            4 => Kind::Ray(a, b),
-            _ => {
-                if !self
-                    .doc
-                    .objects
-                    .iter()
-                    .any(|o| matches!(o.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a)))
-                {
-                    self.doc.add(Kind::Segment(a, b));
-                }
-                Kind::Midpoint(a, b)
-            }
-        };
-        let id = self.doc.add(kind);
-        self.select_only(id);
+        let result = self.doc.transaction(|doc| {
+            let kind =
+                match mode {
+                    0 => Kind::Segment(a, b),
+                    1 => Kind::Circle(a, b),
+                    3 => Kind::Line(a, b),
+                    4 => Kind::Ray(a, b),
+                    _ => {
+                        if !doc.objects().iter().any(
+                            |o| matches!(o.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a)),
+                        ) {
+                            doc.add(Kind::Segment(a, b));
+                        }
+                        Kind::Midpoint(a, b)
+                    }
+                };
+            Ok(doc.add(kind))
+        });
+        match result {
+            Ok(id) => self.select_only(id),
+            Err(error) => self.status = error,
+        }
     }
     pub(super) fn derived_line(&mut self, perpendicular: bool) {
         if self.doc.partial_view && self.doc.page_count == 1 {
@@ -74,8 +77,8 @@ impl Editor {
             self.status = "Select one point and one straight object".into();
             return;
         }
-        if self.doc.objects[points[0] - 1].page != self.doc.active_page
-            || self.doc.objects[lines[0] - 1].page != self.doc.active_page
+        if self.doc.objects()[points[0] - 1].page != self.doc.active_page
+            || self.doc.objects()[lines[0] - 1].page != self.doc.active_page
         {
             self.status = "Select objects on the current page".into();
             return;
@@ -104,7 +107,10 @@ impl Editor {
             .copied()
             .filter(|id| {
                 matches!(
-                    self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                    self.doc
+                        .objects()
+                        .get(id.saturating_sub(1))
+                        .map(|o| &o.kind),
                     Some(Kind::Segment(_, _))
                 )
             })
@@ -113,8 +119,8 @@ impl Editor {
             self.status = "Select one center point and one radius segment".into();
             return;
         }
-        if self.doc.objects[centers[0] - 1].page != self.doc.active_page
-            || self.doc.objects[segments[0] - 1].page != self.doc.active_page
+        if self.doc.objects()[centers[0] - 1].page != self.doc.active_page
+            || self.doc.objects()[segments[0] - 1].page != self.doc.active_page
         {
             self.status = "Select objects on the current page".into();
             return;
@@ -134,7 +140,7 @@ impl Editor {
         }
         if vertices
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -177,7 +183,7 @@ impl Editor {
             return;
         }
         let (driver, target) = if matches!(
-            self.doc.objects[ids[0] - 1].kind,
+            self.doc.objects()[ids[0] - 1].kind,
             Kind::PointOnSegment(_, _)
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
@@ -209,7 +215,7 @@ impl Editor {
             .filter_map(|&id| {
                 let definition = self
                     .doc
-                    .objects
+                    .objects()
                     .get(id.checked_sub(1)?)?
                     .kind
                     .transform_definition()?;
@@ -219,14 +225,14 @@ impl Editor {
             })
             .collect::<Vec<_>>();
         for &image in &self.selection_order {
-            let object = &self.doc.objects[image - 1];
+            let object = &self.doc.objects()[image - 1];
             if !object.kind.is_iteration_depth_value() {
                 continue;
             }
             for seed in object.kind.dependencies() {
                 if self.selection_order.contains(&seed)
-                    && matches!(self.doc.objects[seed - 1].kind, Kind::Parameter(_))
-                    && self.doc.objects[seed - 1].kind.is_iteration_depth_value()
+                    && matches!(self.doc.objects()[seed - 1].kind, Kind::Parameter(_))
+                    && self.doc.objects()[seed - 1].kind.is_iteration_depth_value()
                 {
                     mappings.push((seed, image));
                 }
@@ -262,7 +268,7 @@ impl Editor {
             .copied()
             .filter(|&id| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(id - 1)
                     .is_some_and(|object| geometry(&object.kind))
             })
@@ -274,7 +280,7 @@ impl Editor {
             .selection_order
             .iter()
             .copied()
-            .filter(|&id| self.doc.objects[id - 1].kind.is_iteration_depth_value())
+            .filter(|&id| self.doc.objects()[id - 1].kind.is_iteration_depth_value())
             .filter(|id| ![seed, image].contains(id))
             .collect::<Vec<_>>();
         if values.len() > 1
@@ -284,11 +290,11 @@ impl Editor {
         {
             return false;
         }
-        let broad = !matches!(self.doc.objects[seed - 1].kind, Kind::Free(_))
+        let broad = !matches!(self.doc.objects()[seed - 1].kind, Kind::Free(_))
             || bindings.len() > 1
             || bindings
                 .iter()
-                .any(|&id| match self.doc.objects[id - 1].kind {
+                .any(|&id| match self.doc.objects()[id - 1].kind {
                     Kind::Segment(..) | Kind::Circle(..) => false,
                     Kind::Ray(..) => values.is_empty(),
                     _ => true,
@@ -296,9 +302,9 @@ impl Editor {
         if !broad {
             return false;
         }
-        let mut dependent = vec![false; self.doc.objects.len() + 1];
+        let mut dependent = vec![false; self.doc.objects().len() + 1];
         dependent[seed] = true;
-        for object in &self.doc.objects {
+        for object in self.doc.objects() {
             if object.id != seed {
                 dependent[object.id] = self.doc.dependencies_of(object.id).is_some_and(|parents| {
                     parents
@@ -351,9 +357,9 @@ impl Editor {
             .selection_order
             .iter()
             .copied()
-            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Free(_)));
+            .find(|id| matches!(self.doc.objects()[*id - 1].kind, Kind::Free(_)));
         let image = self.selection_order.iter().copied().find(|id| {
-            self.doc.objects[*id - 1]
+            self.doc.objects()[*id - 1]
                 .kind
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Point)
@@ -366,14 +372,14 @@ impl Editor {
             .selection_order
             .iter()
             .copied()
-            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Polygon(_)));
+            .find(|id| matches!(self.doc.objects()[*id - 1].kind, Kind::Polygon(_)));
         let result = if let Some(polygon) = selected_polygon {
             let images = self
                 .selection_order
                 .iter()
                 .copied()
                 .filter(|id| {
-                    self.doc.objects[*id - 1]
+                    self.doc.objects()[*id - 1]
                         .kind
                         .transform_definition()
                         .is_some_and(|definition| {
@@ -391,13 +397,13 @@ impl Editor {
                 .selection_order
                 .iter()
                 .copied()
-                .filter(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Segment(_, _)))
+                .filter(|id| matches!(self.doc.objects()[*id - 1].kind, Kind::Segment(_, _)))
                 .collect::<Vec<_>>();
             let depth_parameter = self
                 .selection_order
                 .iter()
                 .copied()
-                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
+                .find(|id| matches!(self.doc.objects()[*id - 1].kind, Kind::Parameter(_)));
             let depth = depth_parameter.map_or(IterationDepth::Fixed(depth), IterationDepth::Value);
             if images.len() == 2 {
                 self.doc.add_branching_polygon_iteration(
@@ -410,7 +416,7 @@ impl Editor {
             let calculation =
                 self.selection_order
                     .iter()
-                    .find_map(|id| match self.doc.objects[*id - 1].kind {
+                    .find_map(|id| match self.doc.objects()[*id - 1].kind {
                         Kind::PointNumericLabel(_, value)
                             if self.selection_order.contains(&value) =>
                         {
@@ -419,15 +425,15 @@ impl Editor {
                         _ => None,
                     });
             let parameter = calculation.and_then(|id| {
-                let sources = self.doc.objects[id - 1].kind.dependencies();
+                let sources = self.doc.objects()[id - 1].kind.dependencies();
                 self.selection_order.iter().copied().find(|source| {
                     sources.contains(source)
-                        && matches!(self.doc.objects[*source - 1].kind, Kind::Parameter(_))
+                        && matches!(self.doc.objects()[*source - 1].kind, Kind::Parameter(_))
                 })
             });
             let label = self.selection_order.iter().copied().find(|id| {
                 matches!(
-                    self.doc.objects[*id - 1].kind,
+                    self.doc.objects()[*id - 1].kind,
                     Kind::PointNumericLabel(_, _)
                 )
             });
@@ -440,7 +446,7 @@ impl Editor {
                             .find(|id| {
                                 *id != parameter
                                     && *id != calculation
-                                    && self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                                    && self.doc.objects()[*id - 1].kind.is_iteration_depth_value()
                                     && self.doc.unitless_numeric_value(*id).is_some()
                             })
                             .map(IterationDepth::Value)
@@ -467,16 +473,16 @@ impl Editor {
         } else if self.selection_order.len() == 4 {
             let carried = self.selection_order.iter().copied().find(|id| {
                 matches!(
-                    self.doc.objects[*id - 1].kind,
+                    self.doc.objects()[*id - 1].kind,
                     Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Circle(_, _)
                 )
             });
             let value = self.selection_order.iter().copied().find(|id| {
-                self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                self.doc.objects()[*id - 1].kind.is_iteration_depth_value()
                     && self.doc.unitless_numeric_value(*id).is_some()
             });
             match (carried,value) {
-                (Some(object),Some(value))=>match self.doc.objects[object-1].kind {
+                (Some(object),Some(value))=>match self.doc.objects()[object-1].kind {
                     Kind::Segment(_,_)=>self.doc.add_segment_iteration(seed, image, object, IterationDepth::Value(value)),
                     Kind::Ray(_,_)=>self.doc.add_ray_iteration(seed,image,object,value),
                     Kind::Circle(_,_)=>self.doc.add_circle_iteration(seed, image, object, IterationDepth::Value(value)),
@@ -487,12 +493,12 @@ impl Editor {
         } else if self.selection_order.len() == 3 {
             let segment = self.selection_order.iter().copied().find(|id| {
                 matches!(
-                    self.doc.objects[*id - 1].kind,
+                    self.doc.objects()[*id - 1].kind,
                     Kind::Segment(_, _) | Kind::Circle(_, _)
                 )
             });
             match segment {
-                Some(segment) => match self.doc.objects[segment - 1].kind {
+                Some(segment) => match self.doc.objects()[segment - 1].kind {
                     Kind::Circle(_, _) => self.doc.add_circle_iteration(seed, image, segment, IterationDepth::Fixed(depth)),
                     _ => self.doc.add_segment_iteration(seed, image, segment, IterationDepth::Fixed(depth)),
                 },
@@ -500,7 +506,7 @@ impl Editor {
                     .selection_order
                     .iter()
                     .copied()
-                    .find(|id| self.doc.objects[*id - 1].kind.is_iteration_depth_value())
+                    .find(|id| self.doc.objects()[*id - 1].kind.is_iteration_depth_value())
                 {
                     Some(value) => self
                         .doc.add_point_iteration(seed, image, IterationDepth::Value(value)),
@@ -517,7 +523,7 @@ impl Editor {
             Ok(id) => {
                 self.select_only(id);
                 let actual_depth = self.doc.point_iteration_images(id).map_or_else(
-                    || match self.doc.objects[id - 1].kind {
+                    || match self.doc.objects()[id - 1].kind {
                         Kind::BranchingPolygonIteration {
                             depth: IterationDepth::Fixed(n),
                             ..
@@ -544,37 +550,44 @@ impl Editor {
             return;
         }
         let host = self.selection_order.iter().copied().find(|id| {
-            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| {
-                o.kind.is_polygon()
-                    || o.kind.is_arc()
-                    || is_circle_construction_host(&o.kind)
-                    || matches!(
-                        o.kind,
-                        Kind::Locus(..)
-                            | Kind::ParameterLocus(..)
-                            | Kind::FunctionPlot(..)
-                            | Kind::SampledMapped(_)
-                            | Kind::SectorBoundary(_)
+            self.doc
+                .objects()
+                .get(id.saturating_sub(1))
+                .is_some_and(|o| {
+                    o.kind.is_polygon()
+                        || o.kind.is_arc()
+                        || is_circle_construction_host(&o.kind)
+                        || matches!(
+                            o.kind,
+                            Kind::Locus(..)
+                                | Kind::ParameterLocus(..)
+                                | Kind::FunctionPlot(..)
+                                | Kind::SampledMapped(_)
+                                | Kind::SectorBoundary(_)
+                        )
+                })
+                || matches!(
+                    self.doc
+                        .objects()
+                        .get(id.saturating_sub(1))
+                        .map(|o| &o.kind),
+                    Some(
+                        Kind::Polygon(_)
+                            | Kind::Segment(_, _)
+                            | Kind::Ray(_, _)
+                            | Kind::Line(_, _)
+                            | Kind::ThreePointArc(_, _, _)
+                            | Kind::ArcOnCircle(_, _, _)
+                            | Kind::CenterArc(_, _, _)
                     )
-            }) || matches!(
-                self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                Some(
-                    Kind::Polygon(_)
-                        | Kind::Segment(_, _)
-                        | Kind::Ray(_, _)
-                        | Kind::Line(_, _)
-                        | Kind::ThreePointArc(_, _, _)
-                        | Kind::ArcOnCircle(_, _, _)
-                        | Kind::CenterArc(_, _, _)
                 )
-            )
         });
         let Some(host) = host else {
             self.status =
                 "Select a segment, ray, line, circle, arc, polygon, sector, or point curve".into();
             return;
         };
-        if self.doc.objects[host - 1].page != self.doc.active_page {
+        if self.doc.objects()[host - 1].page != self.doc.active_page {
             self.status = "Select a host on the current page".into();
             return;
         }
@@ -629,22 +642,22 @@ impl Editor {
             return;
         }
         let (a, b) = (ids[0], ids[1]);
-        if self.doc.objects[a - 1].page != self.doc.active_page
-            || self.doc.objects[b - 1].page != self.doc.active_page
+        if self.doc.objects()[a - 1].page != self.doc.active_page
+            || self.doc.objects()[b - 1].page != self.doc.active_page
         {
             self.status = "Select objects on the current page".into();
             return;
         }
         let round = |id: usize| {
             self.doc.circle_points(id).is_some()
-                || self.doc.objects[id - 1].kind.is_arc() && self.doc.arc_points(id, 1).is_some()
+                || self.doc.objects()[id - 1].kind.is_arc() && self.doc.arc_points(id, 1).is_some()
         };
         let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
             vec![Kind::Intersection(a, b)]
         } else if self.doc.can_construct_boundary_intersection(a, b)
             || self.doc.can_construct_boundary_intersection(b, a)
         {
-            let (straight, polygon) = if self.doc.objects[b - 1].kind.is_polygon() {
+            let (straight, polygon) = if self.doc.objects()[b - 1].kind.is_polygon() {
                 (a, b)
             } else {
                 (b, a)
@@ -679,28 +692,33 @@ impl Editor {
             self.status = "Select intersecting lines, circles, arcs, polygons or curves".into();
             return;
         };
-        self.doc.selected.clear();
-        self.selection_order.clear();
-        let mut positions = Vec::<Point>::new();
-        for kind in kinds {
-            let mut probe = self.doc.clone();
-            let probe_id = probe.add(kind.clone());
-            let Some(position) = probe.position(probe_id) else {
-                continue;
-            };
-            if positions
-                .iter()
-                .any(|existing| existing.distance(position) <= 1e-8)
-            {
-                continue;
+        let result = self.doc.transaction(|doc| {
+            let mut created = Vec::new();
+            let mut positions = Vec::<Point>::new();
+            for kind in kinds {
+                let mut probe = doc.clone();
+                let probe_id = probe.add(kind.clone());
+                let Some(position) = probe.position(probe_id) else {
+                    continue;
+                };
+                if positions
+                    .iter()
+                    .any(|existing| existing.distance(position) <= 1e-8)
+                {
+                    continue;
+                }
+                positions.push(position);
+                created.push(doc.add(kind));
             }
-            positions.push(position);
-            let id = self.doc.add(kind);
-            self.doc.selected.insert(id);
-            self.selection_order.push(id);
-        }
-        if self.selection_order.is_empty() {
-            self.status = "Selected paths have no intersection".into();
+            if created.is_empty() {
+                return Err("Selected paths have no intersection".into());
+            }
+            doc.selected = created.iter().copied().collect();
+            Ok(created)
+        });
+        match result {
+            Ok(created) => self.selection_order = created,
+            Err(error) => self.status = error,
         }
     }
     pub(super) fn angle_bisector(&mut self) {
@@ -715,7 +733,7 @@ impl Editor {
         }
         if ids
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -735,7 +753,7 @@ impl Editor {
         }
         if ids
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -755,7 +773,7 @@ impl Editor {
         }
         if ids
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -776,7 +794,7 @@ impl Editor {
         let (circle, start, end) = (ids[0], ids[1], ids[2]);
         if [circle, start, end].iter().any(|id| {
             self.doc
-                .objects
+                .objects()
                 .get(id.saturating_sub(1))
                 .is_none_or(|object| object.page != self.doc.active_page)
         }) {
@@ -785,12 +803,12 @@ impl Editor {
         }
         let valid = [start, end].iter().all(|id| {
             self.doc
-                .objects
+                .objects()
                 .get(id.saturating_sub(1))
                 .is_some_and(|object| !object.deleted && object.kind.is_point())
         }) && self
             .doc
-            .objects
+            .objects()
             .get(circle.saturating_sub(1))
             .is_some_and(|object| !object.deleted && object.kind.is_circle());
         if !valid {

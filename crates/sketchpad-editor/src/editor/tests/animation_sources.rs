@@ -94,7 +94,7 @@ fn selected_segment_and_circle_animate_their_source_points() {
     ] {
         let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
         let before = [1, 2].map(|id| editor.doc.position(id).unwrap());
-        let hidden = !editor.doc.objects[0].visible;
+        let hidden = !editor.doc.objects()[0].visible;
         editor.select_only(3);
         editor.animate_selected();
         assert_eq!(editor.animations.len(), 2);
@@ -112,7 +112,7 @@ fn selected_segment_and_circle_animate_their_source_points() {
         editor.tick_animation(0.1);
         for (id, initial) in [1, 2].into_iter().zip(before) {
             assert_ne!(editor.doc.position(id).unwrap(), initial);
-            assert_eq!(editor.doc.objects[id - 1].visible, !hidden);
+            assert_eq!(editor.doc.objects()[id - 1].visible, !hidden);
         }
         editor.stop_animation();
         assert!(
@@ -134,16 +134,16 @@ fn selected_segment_and_circle_animate_their_source_points() {
     let bytes = std::fs::read(path).unwrap();
     let mut editor = Editor::new(Document::from_bytes(&bytes, None).unwrap());
     let before = editor.doc.position(66).unwrap();
-    let kind = editor.doc.objects[65].kind.clone();
-    let undo = editor.doc.undo.len();
+    let kind = editor.doc.objects()[65].kind.clone();
+    let undo = editor.doc.undo_len();
     editor.select_only(66);
     editor.animate_selected();
     assert_eq!(editor.animations.len(), 1);
     assert!(editor.animations[0].transient_point);
-    assert_eq!(editor.doc.undo.len(), undo);
+    assert_eq!(editor.doc.undo_len(), undo);
     editor.tick_animation(0.1);
     assert_ne!(editor.doc.position(66), Some(before));
-    assert_eq!(editor.doc.objects[65].kind, kind);
+    assert_eq!(editor.doc.objects()[65].kind, kind);
     assert!(!editor.doc.dirty);
     assert_eq!(editor.doc.encode().unwrap(), bytes);
     editor.stop_animation();
@@ -251,20 +251,20 @@ fn indirect_segment_animation_button_moves_both_endpoints() {
             scale: 1.,
             center: Point { x: 200., y: 150. },
         };
-        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[3].kind else {
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[3].kind else {
             panic!("Expected Animation button")
         };
         let click = editor
             .action_button_rect(&viewport, *anchor, label)
             .center();
         let before = [1, 2].map(|id| editor.doc.position(id).unwrap());
-        let visibility = [1, 2].map(|id| editor.doc.objects[id - 1].visible);
+        let visibility = [1, 2].map(|id| editor.doc.objects()[id - 1].visible);
         editor.click(&viewport, click, false);
         assert_eq!(editor.animations.len(), 2);
         editor.tick_animation(0.1);
         for (id, initial) in [1, 2].into_iter().zip(before) {
             assert_ne!(editor.doc.position(id).unwrap(), initial);
-            assert_eq!(editor.doc.objects[id - 1].visible, visibility[id - 1]);
+            assert_eq!(editor.doc.objects()[id - 1].visible, visibility[id - 1]);
         }
     }
 }

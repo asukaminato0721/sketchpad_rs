@@ -6,7 +6,7 @@ impl Editor {
     pub(super) fn referenced_action_hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         for object in self
             .doc
-            .objects
+            .objects()
             .iter()
             .rev()
             .filter(|object| self.doc.is_displayed(object.id))
@@ -28,7 +28,7 @@ impl Editor {
                         .copied()
                         && self
                             .doc
-                            .objects
+                            .objects()
                             .get(target - 1)
                             .is_some_and(|o| !o.deleted && o.kind.is_action_button())
                         && egui::Rect::from_min_size(
@@ -65,7 +65,7 @@ impl Editor {
                         .copied()
                         && self
                             .doc
-                            .objects
+                            .objects()
                             .get(target - 1)
                             .is_some_and(|object| !object.deleted && object.kind.is_action_button())
                         && egui::Rect::from_min_size(

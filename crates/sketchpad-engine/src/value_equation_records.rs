@@ -183,30 +183,17 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }
 fn records(b: &[u8], start: usize) -> Result<Vec<Record>, String> {
-    let mut out = Vec::new();
-    let mut at = start;
-    while at < b.len() {
-        if b.len() - at < 8 {
-            return Err("Truncated GSP record".into());
-        }
-        let len = u32_at(b, at) as usize;
-        let begin = at + 8;
-        let end_payload = begin.checked_add(len).ok_or("Record length overflow")?;
-        let end = end_payload
-            .checked_add(len & 1)
-            .ok_or("Record length overflow")?;
-        if end > b.len() {
-            return Err("Truncated GSP payload".into());
-        }
-        out.push(Record {
-            kind: u32_at(b, at + 4),
-            start: at,
-            payload: begin..end_payload,
-            end,
-        });
-        at = end;
-    }
-    Ok(out)
+    sketchpad_format::records_from(b, start).map(|records| {
+        records
+            .into_iter()
+            .map(|record| Record {
+                kind: record.kind,
+                start: record.start,
+                end: record.end,
+                payload: record.data,
+            })
+            .collect()
+    })
 }
 
 pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {

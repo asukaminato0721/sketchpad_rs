@@ -54,34 +54,36 @@ impl Editor {
         &mut self,
         create: impl FnOnce(&mut Self) -> Result<(), String>,
     ) -> Result<Value, String> {
-        let original = self.doc.clone();
+        let mut candidate = self.doc.clone();
         let order = self.selection_order.clone();
         let status = self.status.clone();
-        let count = original.objects.len();
-        let outcome = create(self).and_then(|()| {
-            let created = self.doc.objects.len().saturating_sub(count);
-            if created == 0 {
-                return Err(self.status.clone());
-            }
-            if created > 256 {
-                return Err("A construction can create at most 256 objects".into());
-            }
-            // Check the actual writer before accepting additions to imported documents.
-            self.doc.encode().map(|_| ())
+        let count = candidate.objects().len();
+        let outcome = candidate.transaction(|working| {
+            std::mem::swap(&mut self.doc, working);
+            let outcome = create(self).and_then(|()| {
+                let created = self.doc.objects().len().saturating_sub(count);
+                if created == 0 {
+                    return Err(self.status.clone());
+                }
+                if created > 256 {
+                    return Err("A construction can create at most 256 objects".into());
+                }
+                // Check the actual writer before accepting additions to imported documents.
+                self.doc.encode().map(|_| ())
+            });
+            std::mem::swap(&mut self.doc, working);
+            outcome
         });
         if let Err(error) = outcome {
-            self.doc = original;
             self.selection_order = order;
             self.status = status;
             return Err(error);
         }
-        // The first checkpoint contains the original document. Drop intermediate
-        // checkpoints from midpoint helpers, labels, or multiple intersections.
-        self.doc.undo.truncate(original.undo.len() + 1);
-        self.status = format!("Created {} object(s)", self.doc.objects.len() - count);
+        self.doc = candidate;
+        self.status = format!("Created {} object(s)", self.doc.objects().len() - count);
         let objects: Vec<_> = self
             .doc
-            .objects
+            .objects()
             .iter()
             .skip(count)
             .map(|object| self.mcp_object_summary(object))

@@ -133,10 +133,10 @@ pub(crate) fn init() {
         std::env::consts::ARCH
     );
     log::info!("WGPU_BACKEND={:?}", std::env::var_os("WGPU_BACKEND"));
-    if let Some(parent) = executable.as_deref().and_then(Path::parent) {
-        if let Ok(build) = std::fs::read_to_string(parent.join("BUILD-INFO.json")) {
-            log::info!("Build information: {}", build.trim());
-        }
+    if let Some(parent) = executable.as_deref().and_then(Path::parent)
+        && let Ok(build) = std::fs::read_to_string(parent.join("BUILD-INFO.json"))
+    {
+        log::info!("Build information: {}", build.trim());
     }
     // The OS query must not delay window creation.
     let _ = std::thread::Builder::new()

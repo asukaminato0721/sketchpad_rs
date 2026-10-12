@@ -50,7 +50,7 @@ fn inspect(path: &str) -> Result<(), String> {
     println!(
         "{} page(s), {} object(s), partial_view={}, edit_restriction={:?}",
         document.page_count,
-        document.objects.len(),
+        document.objects().len(),
         document.partial_view,
         document.edit_restriction()
     );
@@ -62,7 +62,7 @@ fn inspect(path: &str) -> Result<(), String> {
             definition.output()
         );
     }
-    for object in &document.objects {
+    for object in document.objects() {
         let label = object.label.as_ref().and_then(|label| {
             label
                 .name_utf8()
@@ -200,7 +200,7 @@ fn verify(paths: &[String]) -> Result<(), String> {
             if document.encode()? != bytes {
                 return Err("round trip changed source bytes".into());
             }
-            Ok((document.objects.len(), document.partial_view))
+            Ok((document.objects().len(), document.partial_view))
         })();
         match result {
             Ok((count, partial)) => println!("PASS {path}: {count} objects, partial={partial}"),
@@ -296,7 +296,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                     let unknown_codes = match document.embedded_tool_document(index) {
                         Ok(prototype) => {
                             let codes: Vec<_> = prototype
-                                .objects
+                                .objects()
                                 .iter()
                                 .filter_map(|object| {
                                     if let Kind::Unsupported(code) = object.kind {
@@ -306,7 +306,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                                     }
                                 })
                                 .collect();
-                            tool_known += prototype.objects.len() - codes.len();
+                            tool_known += prototype.objects().len() - codes.len();
                             if prototype.partial_view || !codes.is_empty() {
                                 tool_partial += 1;
                             } else {
@@ -329,7 +329,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                     }
                 }
                 let has_unsupported_scene = document
-                    .objects
+                    .objects()
                     .iter()
                     .any(|object| matches!(object.kind, Kind::Unsupported(_)));
                 scene_full += usize::from(!has_unsupported_scene);
@@ -338,8 +338,8 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                 } else {
                     full += 1;
                 }
-                objects += document.objects.len() + prototype_slots;
-                for object in &document.objects {
+                objects += document.objects().len() + prototype_slots;
+                for object in document.objects() {
                     if let Kind::Unsupported(code) = object.kind {
                         let (count, examples) = unsupported.entry(code).or_default();
                         *count += 1;
@@ -410,7 +410,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
 fn demo(path: &str, steps: usize) -> Result<(), String> {
     let mut document = sketchpad_rs::demo::geometry_document(steps)?;
     document.save_to(Path::new(path))?;
-    println!("{path}: wrote {} objects", document.objects.len());
+    println!("{path}: wrote {} objects", document.objects().len());
     Ok(())
 }
 
@@ -631,7 +631,9 @@ fn replay(path: &str) -> Result<(), String> {
                     )?;
                 }
                 "open" if !rest.is_empty() => document = Document::open(Path::new(rest))?,
-                "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,
+                "save" if !rest.is_empty() => {
+                    document.save_to(Path::new(rest))?;
+                }
                 "split_point" => {
                     let id: usize = rest.parse().map_err(|_| "invalid point ID")?;
                     document.split_point(id)?;
@@ -935,7 +937,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "point_value" => {
                     let first: usize = rest.parse().map_err(|_| "invalid constrained point ID")?;
                     let second = match document
-                        .objects
+                        .objects()
                         .get(first.saturating_sub(1))
                         .map(|object| &object.kind)
                     {
@@ -964,7 +966,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "equation" => {
                     let first: usize = rest.parse().map_err(|_| "invalid line or circle ID")?;
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(first.saturating_sub(1))
                         .map(|object| &object.kind)
                     {
@@ -1186,7 +1188,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "area" => {
                     let host: usize = rest.parse().map_err(|_| "invalid object ID")?;
                     let kind = if document
-                        .objects
+                        .objects()
                         .get(host.saturating_sub(1))
                         .is_some_and(|o| o.kind.is_polygon())
                     {
@@ -1276,7 +1278,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "animation_button_from" => {
                     let source: usize = rest.parse().map_err(|_| "invalid animation source")?;
                     let kind = document
-                        .objects
+                        .objects()
                         .get(source.checked_sub(1).ok_or("invalid animation source")?)
                         .map(|object| &object.kind)
                         .ok_or("invalid animation source")?;
@@ -1682,7 +1684,7 @@ fn replay(path: &str) -> Result<(), String> {
                         _ => return Err("expected on or off".into()),
                     };
                     let name = document
-                        .objects
+                        .objects()
                         .get(id.saturating_sub(1))
                         .and_then(|o| o.label.as_ref())
                         .and_then(|label| label.name_utf8().ok())
@@ -1963,7 +1965,7 @@ fn replay(path: &str) -> Result<(), String> {
                         .collect::<Result<Vec<_>, _>>()?;
                     let kind = if matches!(
                         document
-                            .objects
+                            .objects()
                             .get(ids[0].saturating_sub(1))
                             .map(|o| &o.kind),
                         Some(kind) if kind.is_polygon()
@@ -2126,7 +2128,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let distance = parts[1].parse().map_err(|_| "invalid distance ID")?;
                     let angle = parts[2].parse().map_err(|_| "invalid angle")?;
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(source.saturating_sub(1))
                         .map(|object| &object.kind)
                     {
@@ -2182,7 +2184,7 @@ fn replay(path: &str) -> Result<(), String> {
                         .map(|part| part.parse::<usize>().map_err(|_| "invalid object ID"))
                         .collect::<Result<Vec<_>, _>>()?;
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(ids[0].saturating_sub(1))
                         .map(|o| &o.kind)
                     {
@@ -2217,7 +2219,7 @@ fn replay(path: &str) -> Result<(), String> {
                         _ => return Err("expected horizontal_fixed or vertical_fixed".into()),
                     };
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(source.saturating_sub(1))
                         .map(|o| &o.kind)
                     {
@@ -2264,23 +2266,23 @@ fn replay(path: &str) -> Result<(), String> {
                     let factor = parts[2].parse().map_err(|_| "invalid ratio")?;
                     let kind = if matches!(
                         document
-                            .objects
+                            .objects()
                             .get(source.saturating_sub(1))
                             .map(|o| &o.kind),
                         Some(Kind::Segment(_, _))
                     ) {
                         Kind::ScaledSegment(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray))
+                    } else if matches!(document.objects().get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray))
                     {
                         Kind::ScaledRay(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line))
+                    } else if matches!(document.objects().get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line))
                     {
                         Kind::ScaledLine(source, center, factor)
                     } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
                     } else if matches!(
                         document
-                            .objects
+                            .objects()
                             .get(source.saturating_sub(1))
                             .map(|o| &o.kind),
                         Some(Kind::Polygon(_))
@@ -2315,7 +2317,7 @@ fn replay(path: &str) -> Result<(), String> {
                     }
                     let kind = if matches!(
                         document
-                            .objects
+                            .objects()
                             .get(ids[0].saturating_sub(1))
                             .map(|o| &o.kind),
                         Some(Kind::Segment(_, _))
@@ -2325,7 +2327,7 @@ fn replay(path: &str) -> Result<(), String> {
                         Kind::RatioScaledCircle(ids[0], ids[1], ids[2], ids[3], ids[4])
                     } else if matches!(
                         document
-                            .objects
+                            .objects()
                             .get(ids[0].saturating_sub(1))
                             .map(|o| &o.kind),
                         Some(Kind::Polygon(_))
@@ -2346,7 +2348,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let center = parts[1].parse().map_err(|_| "invalid center ID")?;
                     let angle = parts[2].parse().map_err(|_| "invalid angle")?;
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(source.saturating_sub(1))
                         .map(|o| &o.kind)
                     {
@@ -2385,7 +2387,7 @@ fn replay(path: &str) -> Result<(), String> {
                     }
                     let source: usize = parts[0];
                     let kind = match document
-                        .objects
+                        .objects()
                         .get(source.saturating_sub(1))
                         .map(|o| &o.kind)
                     {
@@ -2430,12 +2432,12 @@ fn replay(path: &str) -> Result<(), String> {
                         "perpendicular" => Kind::Perpendicular(a, b),
                         "reflect" => {
                             if matches!(
-                                document.objects.get(a.saturating_sub(1)).map(|o| &o.kind),
+                                document.objects().get(a.saturating_sub(1)).map(|o| &o.kind),
                                 Some(Kind::Polygon(_))
                             ) {
                                 Kind::ReflectedPolygon(a, b)
                             } else if matches!(
-                                document.objects.get(a.saturating_sub(1)).map(|o| &o.kind),
+                                document.objects().get(a.saturating_sub(1)).map(|o| &o.kind),
                                 Some(Kind::Segment(_, _))
                             ) {
                                 Kind::ReflectedSegment(a, b)
@@ -2501,7 +2503,10 @@ fn replay(path: &str) -> Result<(), String> {
                     let x = parts[1].parse().map_err(|_| "invalid x coordinate")?;
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
                     if !matches!(
-                        document.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                        document
+                            .objects()
+                            .get(id.saturating_sub(1))
+                            .map(|o| &o.kind),
                         Some(
                             Kind::Free(_)
                                 | Kind::GraphVerticalUnit(_, _)
@@ -2523,7 +2528,7 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "hide" => {
                     let id: usize = rest.parse().map_err(|_| "invalid object ID")?;
-                    if document.objects.get(id.saturating_sub(1)).is_none() {
+                    if document.objects().get(id.saturating_sub(1)).is_none() {
                         return Err("unknown object ID".into());
                     }
                     document.selected.clear();
@@ -2536,7 +2541,7 @@ fn replay(path: &str) -> Result<(), String> {
                         return Err("expected object ID and style value".into());
                     };
                     let id: usize = id.parse().map_err(|_| "invalid object ID")?;
-                    if document.objects.get(id.saturating_sub(1)).is_none() {
+                    if document.objects().get(id.saturating_sub(1)).is_none() {
                         return Err("unknown object ID".into());
                     }
                     document.selected.clear();
@@ -2631,11 +2636,11 @@ fn replay(path: &str) -> Result<(), String> {
         })();
         result.map_err(|error| format!("{path}:{}: {error}", index + 1))?;
         if env::var_os("SKETCHPAD_TRACE").is_some() {
-            println!("line {}: {command}: {:?}", index + 1, document.objects);
+            println!("line {}: {command}: {:?}", index + 1, document.objects());
         }
     }
     document.can_save()?;
-    println!("replay complete: {} objects", document.objects.len());
+    println!("replay complete: {} objects", document.objects().len());
     Ok(())
 }
 
@@ -2649,7 +2654,7 @@ fn svg(input: &str, output: &str) -> Result<(), String> {
         f64::NEG_INFINITY,
     );
     for object in document
-        .objects
+        .objects()
         .iter()
         .filter(|object| object.visible && object.page == document.active_page)
     {

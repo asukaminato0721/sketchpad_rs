@@ -3,13 +3,20 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveOutcome {
+    /// Saved object numbers may now identify different objects. Consumers must
+    /// discard object references before they perform another operation.
+    pub object_ids_changed: bool,
+}
+
 impl Document {
     pub fn verify_roundtrip(&self) -> Result<(), String> {
         let bytes = self.encode()?;
         let reparsed = Self::from_bytes(&bytes, None)?;
         self.validate_reparsed_document(&reparsed)
     }
-    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
+    pub fn save_to(&mut self, path: &Path) -> Result<SaveOutcome, String> {
         let reordered_additions = self.has_pending_multi_page_additions();
         let data = self.encode()?;
         let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
@@ -47,6 +54,9 @@ impl Document {
         self.page_names = reparsed.page_names;
         if had_deletion || reordered_additions {
             self.selected.clear();
+            self.evaluation_context = None;
+            self.sampling_plans = Default::default();
+            self.last_moved_object = None;
         }
         self.original = data;
         self.merge_aliases.clear();
@@ -60,6 +70,8 @@ impl Document {
         self.undo.clear();
         self.redo.clear();
         self.dirty = false;
-        Ok(())
+        Ok(SaveOutcome {
+            object_ids_changed: had_deletion || reordered_additions,
+        })
     }
 }

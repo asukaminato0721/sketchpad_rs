@@ -203,7 +203,7 @@ pub(super) fn tool_list() -> Value {
 impl Editor {
     fn mcp_object(&self, id: usize) -> Result<&Object, String> {
         id.checked_sub(1)
-            .and_then(|index| self.doc.objects.get(index))
+            .and_then(|index| self.doc.objects().get(index))
             .filter(|object| !object.deleted)
             .ok_or_else(|| format!("Object {id} does not exist"))
     }
@@ -243,7 +243,7 @@ impl Editor {
             "children".into(),
             json!(
                 self.doc
-                    .objects
+                    .objects()
                     .iter()
                     .filter(|child| !child.deleted
                         && self
@@ -285,10 +285,10 @@ impl Editor {
             "path":self.doc.path.as_ref().map(|path| path.to_string_lossy()), "dirty":self.doc.dirty,
             "active_page":self.doc.active_page + 1, "page_count":self.doc.page_count,
             "page_names":self.doc.page_names,
-            "object_count":self.doc.objects.iter().filter(|object| !object.deleted).count(),
+            "object_count":self.doc.objects().iter().filter(|object| !object.deleted).count(),
             "selected":self.doc.selected, "selection_order":self.selection_order,
             "tool":tool, "custom_tool":custom_tool, "dragging":self.dragging,
-            "undo_steps":self.doc.undo.len(), "redo_steps":self.doc.redo.len(),
+            "undo_steps":self.doc.undo_len(), "redo_steps":self.doc.redo_len(),
             "partial_view":self.doc.partial_view, "edit_restriction":format!("{:?}",self.doc.edit_restriction()),
             "animation":{"paused":self.animation_paused,"tracks":self.animations.len(),"movements":self.movements.len(),"presentations":self.presentations.len()},
             "viewport":{"scale":self.scale,"center":{"x":self.center.x,"y":self.center.y},
@@ -323,7 +323,7 @@ impl Editor {
                 }
                 let objects: Vec<_> = self
                     .doc
-                    .objects
+                    .objects()
                     .iter()
                     .filter(|object| !object.deleted && object.page + 1 == page)
                     .collect();

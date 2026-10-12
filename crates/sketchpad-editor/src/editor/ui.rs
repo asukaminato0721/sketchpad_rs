@@ -45,7 +45,7 @@ impl Editor {
             });
             if let Some(direction) = adjustment {
                 let parameter = self.doc.selected.iter().find_map(|&id| {
-                    let object = self.doc.objects.get(id.checked_sub(1)?)?;
+                    let object = self.doc.objects().get(id.checked_sub(1)?)?;
                     let sketchpad_engine::document::Kind::Parameter(group) = &object.kind else {
                         return None;
                     };

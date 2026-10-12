@@ -14,7 +14,7 @@ fn clicking_animation_button_starts_its_target_without_controller() {
         scale: 1.,
         center: Point { x: 250., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[button - 1].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[button - 1].kind else {
         panic!("Expected animation button")
     };
     let click = crate::render::action_button_rect(&viewport, *anchor, label).center();
@@ -95,7 +95,7 @@ fn two_point_animation_button_starts_and_stops_both_tracks() {
         scale: 1.,
         center: Point { x: 250., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[button - 1].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[button - 1].kind else {
         panic!("Expected Animation button")
     };
     let click = crate::render::action_button_rect(&viewport, *anchor, label).center();
@@ -122,7 +122,7 @@ fn three_point_animation_button_moves_all_targets() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[6].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[6].kind else {
         panic!("Expected Animation button")
     };
     let click = crate::render::action_button_rect(&viewport, *anchor, label).center();
@@ -152,7 +152,7 @@ fn mixed_point_animation_button_moves_each_point_by_its_path() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[9].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[9].kind else {
         panic!("Expected Animation button")
     };
     let click = editor
@@ -192,7 +192,7 @@ fn selected_parameter_animates_and_saves_with_one_undo_step() {
     assert_eq!(editor.animations.len(), 1);
     assert_eq!(editor.animations[0].parameter_domain, Some((-100., 100.)));
     editor.tick_animation(0.1);
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 1.1).abs() < 1e-9);
@@ -200,12 +200,12 @@ fn selected_parameter_animates_and_saves_with_one_undo_step() {
     let saved = editor.doc.encode().unwrap();
     let reopened = Document::from_bytes(&saved, None).unwrap();
     assert!(!reopened.partial_view);
-    let Kind::Parameter(group) = &reopened.objects[0].kind else {
+    let Kind::Parameter(group) = &reopened.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 1.1).abs() < 1e-9);
     editor.doc.undo();
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 1.).abs() < 1e-9);
@@ -225,7 +225,7 @@ fn parameter_animation_button_click_starts_and_stops_motion() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[1].kind else {
         panic!("Expected Animation button")
     };
     let click = editor
@@ -236,7 +236,7 @@ fn parameter_animation_button_click_starts_and_stops_motion() {
     assert_eq!(editor.animations.len(), 1);
     assert!(!editor.show_motion_controller);
     editor.tick_animation(0.1);
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 1.1).abs() < 1e-9);
@@ -263,13 +263,13 @@ fn parameter_animation_bounces_at_default_domain_edge() {
     editor.animate_selected();
     editor.tick_animation(0.1);
     assert_eq!(editor.animations.len(), 1);
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 100.).abs() < 1e-9);
     editor.tick_animation(0.1);
     assert_eq!(editor.animations.len(), 1);
-    let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+    let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
         panic!("Expected parameter")
     };
     assert!((group.value() - 99.9).abs() < 1e-9);
@@ -305,12 +305,12 @@ fn custom_parameter_button_uses_rate_domain_and_discrete_step() {
         let reopened = Document::from_bytes(&encoded, None).unwrap();
         assert!(!reopened.partial_view);
         assert!(
-            matches!(&reopened.objects[button - 1].kind, Kind::AnimationButton { settings: actual, .. } if actual == &[settings])
+            matches!(&reopened.objects()[button - 1].kind, Kind::AnimationButton { settings: actual, .. } if actual == &[settings])
         );
         editor.animate_button_targets(button, &[1], &[settings]);
         assert_eq!(editor.animations[0].parameter_domain, Some((-3., 7.)));
         editor.tick_animation(0.1);
-        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+        let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
             panic!("Expected parameter")
         };
         assert!((group.value() - expected).abs() < 1e-9);
@@ -318,14 +318,14 @@ fn custom_parameter_button_uses_rate_domain_and_discrete_step() {
             for _ in 0..4 {
                 editor.tick_animation(0.1);
             }
-            let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
                 panic!("Expected parameter")
             };
             assert!((group.value() - 1.5).abs() < 1e-9);
             for _ in 0..15 {
                 editor.tick_animation(0.1);
             }
-            let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            let Kind::Parameter(group) = &editor.doc.objects()[0].kind else {
                 panic!("Expected parameter")
             };
             assert!((group.value() - 3.).abs() < 1e-9);

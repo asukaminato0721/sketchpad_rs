@@ -50,7 +50,7 @@ impl Editor {
             self.status = "Select one segment to measure".into();
             return;
         }
-        if self.doc.objects[segment - 1].page != self.doc.active_page {
+        if self.doc.objects()[segment - 1].page != self.doc.active_page {
             self.status = "Select a segment on the current page".into();
             return;
         }
@@ -65,7 +65,7 @@ impl Editor {
         for &id in &self.selection_order {
             match self
                 .doc
-                .objects
+                .objects()
                 .get(id.saturating_sub(1))
                 .map(|object| &object.kind)
             {
@@ -187,7 +187,7 @@ impl Editor {
             [first] => {
                 let second = match self
                     .doc
-                    .objects
+                    .objects()
                     .get(first.saturating_sub(1))
                     .map(|o| &o.kind)
                 {
@@ -206,7 +206,7 @@ impl Editor {
                         if !equation
                             && self
                                 .doc
-                                .objects
+                                .objects()
                                 .get(host.saturating_sub(1))
                                 .is_some_and(|o| o.kind.is_polygon()) =>
                     {
@@ -283,7 +283,7 @@ impl Editor {
         };
         if [a, b]
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select objects on the current page".into();
             return;
@@ -351,7 +351,7 @@ impl Editor {
             let (first, second) = (*first, *second);
             if [first, second].iter().any(|id| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(id.saturating_sub(1))
                     .is_none_or(|object| {
                         object.page != self.doc.active_page || !object.kind.is_segment()
@@ -392,7 +392,7 @@ impl Editor {
         }
         if [a, b, c]
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -417,7 +417,7 @@ impl Editor {
                 "Select one polygon, sector, or circular-segment interior to measure".into();
             return;
         }
-        if self.doc.objects[polygon - 1].page != self.doc.active_page {
+        if self.doc.objects()[polygon - 1].page != self.doc.active_page {
             self.status = "Select an interior on the current page".into();
             return;
         }
@@ -441,7 +441,7 @@ impl Editor {
         }
         if [a, b, c]
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select points on the current page".into();
             return;
@@ -462,7 +462,7 @@ impl Editor {
         let host = *host;
         if self
             .doc
-            .objects
+            .objects()
             .get(host.saturating_sub(1))
             .is_none_or(|object| object.page != self.doc.active_page)
         {
@@ -471,7 +471,7 @@ impl Editor {
         }
         let source = self
             .doc
-            .objects
+            .objects()
             .get(host.saturating_sub(1))
             .map(|o| &o.kind);
         let is_circle = self.doc.circle_points(host).is_some();
@@ -512,14 +512,14 @@ impl Editor {
         let arc = *arc;
         if !self
             .doc
-            .objects
+            .objects()
             .get(arc.saturating_sub(1))
             .is_some_and(|o| o.kind.is_arc())
         {
             self.status = "Select one arc to measure".into();
             return;
         }
-        if self.doc.objects[arc - 1].page != self.doc.active_page {
+        if self.doc.objects()[arc - 1].page != self.doc.active_page {
             self.status = "Select an arc on the current page".into();
             return;
         }
@@ -536,7 +536,7 @@ impl Editor {
             [arc]
                 if self
                     .doc
-                    .objects
+                    .objects()
                     .get(arc.saturating_sub(1))
                     .is_some_and(|o| o.kind.is_arc() || o.kind.is_sector()) =>
             {
@@ -545,12 +545,12 @@ impl Editor {
             [circle, start, end]
                 if self
                     .doc
-                    .objects
+                    .objects()
                     .get(circle.saturating_sub(1))
                     .is_some_and(|o| o.kind.is_circle())
                     && [start, end].iter().all(|id| {
                         self.doc
-                            .objects
+                            .objects()
                             .get(id.saturating_sub(1))
                             .is_some_and(|o| o.kind.is_point())
                     }) =>
@@ -565,7 +565,7 @@ impl Editor {
         if kind
             .dependencies()
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects()[*id - 1].page != self.doc.active_page)
         {
             self.status = "Select objects on the current page".into();
             return;

@@ -19,7 +19,7 @@ impl Editor {
             speed,
             follow,
             ..
-        } = self.doc.objects[id - 1].kind.clone()
+        } = self.doc.objects()[id - 1].kind.clone()
         else {
             return;
         };
@@ -179,7 +179,7 @@ impl Editor {
     fn action_is_running(&self, id: usize) -> bool {
         match self
             .doc
-            .objects
+            .objects()
             .get(id.saturating_sub(1))
             .map(|object| &object.kind)
         {
@@ -203,7 +203,7 @@ impl Editor {
         }
         match self
             .doc
-            .objects
+            .objects()
             .get(id.saturating_sub(1))
             .map(|object| &object.kind)
         {
@@ -255,7 +255,7 @@ impl Editor {
         }
         let object = self
             .doc
-            .objects
+            .objects()
             .get(id.checked_sub(1).ok_or("Invalid action button ID")?)
             .ok_or("Invalid action button ID")?;
         if object.deleted
@@ -349,7 +349,7 @@ impl Editor {
         }
         let Some(object) = self
             .doc
-            .objects
+            .objects()
             .get(id.checked_sub(1).ok_or("Invalid button ID")?)
         else {
             return Err("Invalid button ID".into());

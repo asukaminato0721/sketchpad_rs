@@ -84,7 +84,7 @@ pub(super) fn object_type_name(object: &Object) -> &'static str {
 }
 
 fn object_description(doc: &Document, id: usize) -> String {
-    let Some(object) = doc.objects.get(id.saturating_sub(1)) else {
+    let Some(object) = doc.objects().get(id.saturating_sub(1)) else {
         return format!("Object {id}");
     };
     let object_type = object_type_name(object);
@@ -101,24 +101,24 @@ fn object_description(doc: &Document, id: usize) -> String {
 
 impl Editor {
     pub(super) fn properties_dialog_ui(&mut self, root: &mut egui::Ui) {
-        let Some(id) = self.properties_dialog else {
+        let Some(id) = self.dialogs.properties_dialog else {
             return;
         };
         let Some(object) = self
             .doc
-            .objects
+            .objects()
             .get(id.checked_sub(1).unwrap_or(usize::MAX))
         else {
-            self.properties_dialog = None;
+            self.dialogs.properties_dialog = None;
             return;
         };
         if object.deleted || object.page != self.doc.active_page {
-            self.properties_dialog = None;
+            self.dialogs.properties_dialog = None;
             return;
         }
 
-        if self.properties_draft_for != Some(id) {
-            self.properties_label_draft = match &object.kind {
+        if self.dialogs.properties_draft_for != Some(id) {
+            self.dialogs.properties_label_draft = match &object.kind {
                 Kind::HideShowButton { label, .. }
                 | Kind::AnimationButton { label, .. }
                 | Kind::SoundButton { label, .. }
@@ -134,75 +134,76 @@ impl Editor {
                     .unwrap_or_default()
                     .to_owned(),
             };
-            self.properties_label_visible_draft =
+            self.dialogs.properties_label_visible_draft =
                 object.label.as_ref().is_some_and(|label| label.visible());
-            self.properties_opacity_draft = match object.visual_style {
+            self.dialogs.properties_opacity_draft = match object.visual_style {
                 Some(VisualStyle::Polygon { opacity, .. }) => opacity,
                 _ => 32767,
             };
             if let Some((_, depth, final_only, _)) = self.doc.iteration_properties(id) {
                 if let IterationDepth::Fixed(depth) = depth {
-                    self.properties_iteration_depth_draft = depth;
+                    self.dialogs.properties_iteration_depth_draft = depth;
                 }
-                self.properties_iteration_final_only_draft = final_only;
+                self.dialogs.properties_iteration_final_only_draft = final_only;
             }
             if let Some(pi_labels) = self.doc.axis_uses_pi_labels(id) {
-                self.properties_axis_pi_labels_draft = pi_labels;
+                self.dialogs.properties_axis_pi_labels_draft = pi_labels;
             }
             if let Some((samples, distortion)) = self.doc.sampled_image_properties(id) {
-                self.properties_sampled_image_samples_draft = samples;
-                self.properties_sampled_image_distortion_draft = distortion;
+                self.dialogs.properties_sampled_image_samples_draft = samples;
+                self.dialogs.properties_sampled_image_distortion_draft = distortion;
             }
             if let Some((min, max, samples, presentation)) = self.doc.plot_properties(id) {
-                self.properties_plot_min_draft = min.to_string();
-                self.properties_plot_max_draft = max.to_string();
-                self.properties_plot_samples_draft = samples;
-                self.properties_plot_presentation_draft = presentation;
+                self.dialogs.properties_plot_min_draft = min.to_string();
+                self.dialogs.properties_plot_max_draft = max.to_string();
+                self.dialogs.properties_plot_samples_draft = samples;
+                self.dialogs.properties_plot_presentation_draft = presentation;
             }
             if let Kind::HideShowButton {
                 action, options, ..
             } = &object.kind
             {
-                self.properties_visibility_action_draft = *action;
-                self.properties_visibility_options_draft = *options;
+                self.dialogs.properties_visibility_action_draft = *action;
+                self.dialogs.properties_visibility_options_draft = *options;
             }
             if let Kind::AnimationButton { settings, .. } = &object.kind {
-                self.properties_animation_settings_draft = settings.clone();
-                self.properties_animation_target_draft = 0;
+                self.dialogs.properties_animation_settings_draft = settings.clone();
+                self.dialogs.properties_animation_target_draft = 0;
             }
             if let Kind::MovementButton { speed, follow, .. } = &object.kind {
-                self.properties_movement_speed_draft = *speed;
-                self.properties_movement_follow_draft = *follow;
+                self.dialogs.properties_movement_speed_draft = *speed;
+                self.dialogs.properties_movement_follow_draft = *follow;
             }
             if let Kind::ScrollButton { placement, .. } = &object.kind {
-                self.properties_scroll_placement_draft = *placement;
+                self.dialogs.properties_scroll_placement_draft = *placement;
             }
             if let Kind::PresentationButton { mode, options, .. } = &object.kind {
-                self.properties_presentation_mode_draft = *mode;
-                self.properties_presentation_options_draft = *options;
+                self.dialogs.properties_presentation_mode_draft = *mode;
+                self.dialogs.properties_presentation_options_draft = *options;
             }
             match &object.kind {
                 Kind::LinkUrlButton { url, .. } => {
-                    self.properties_link_draft.use_page = false;
-                    self.properties_link_draft.target_page = (0..self.doc.page_count)
+                    self.dialogs.properties_link_draft.use_page = false;
+                    self.dialogs.properties_link_draft.target_page = (0..self.doc.page_count)
                         .find(|page| *page != self.doc.active_page)
                         .unwrap_or(0);
-                    self.properties_link_draft.target_button_ordinal = None;
-                    self.properties_link_draft.url.clone_from(url);
+                    self.dialogs.properties_link_draft.target_button_ordinal = None;
+                    self.dialogs.properties_link_draft.url.clone_from(url);
                 }
                 Kind::LinkPageButton {
                     target_page,
                     target_button_ordinal,
                     ..
                 } => {
-                    self.properties_link_draft.use_page = true;
-                    self.properties_link_draft.target_page = *target_page;
-                    self.properties_link_draft.target_button_ordinal = *target_button_ordinal;
-                    self.properties_link_draft.url = "https://".into();
+                    self.dialogs.properties_link_draft.use_page = true;
+                    self.dialogs.properties_link_draft.target_page = *target_page;
+                    self.dialogs.properties_link_draft.target_button_ordinal =
+                        *target_button_ordinal;
+                    self.dialogs.properties_link_draft.url = "https://".into();
                 }
                 _ => {}
             }
-            self.properties_draft_for = Some(id);
+            self.dialogs.properties_draft_for = Some(id);
         }
 
         let description = object_description(&self.doc, id);
@@ -231,7 +232,7 @@ impl Editor {
         let parents = self.doc.dependencies_of(id).unwrap_or_default();
         let children = self
             .doc
-            .objects
+            .objects()
             .iter()
             .filter(|candidate| {
                 !candidate.deleted
@@ -302,16 +303,19 @@ impl Editor {
                     ui.heading(tr("Label"));
                     ui.horizontal(|ui| {
                         ui.label(tr("Name"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
-                    ui.checkbox(&mut self.properties_label_visible_draft, tr("Show label"));
+                    ui.checkbox(
+                        &mut self.dialogs.properties_label_visible_draft,
+                        tr("Show label"),
+                    );
                     apply_label = ui.button(tr("Apply Label")).clicked();
                 }
                 if matches!(object.visual_style, Some(VisualStyle::Polygon { .. })) {
                     ui.separator();
                     ui.heading(tr("Opacity"));
                     ui.add(
-                        egui::Slider::new(&mut self.properties_opacity_draft, 0..=u16::MAX)
+                        egui::Slider::new(&mut self.dialogs.properties_opacity_draft, 0..=u16::MAX)
                             .custom_formatter(|value, _| format!("{:.0}%", value * 100. / 65535.)),
                     );
                     apply_opacity = ui.button(tr("Apply Opacity")).clicked();
@@ -325,7 +329,7 @@ impl Editor {
                                 ui.label(tr("Iterations"));
                                 ui.add(
                                     egui::DragValue::new(
-                                        &mut self.properties_iteration_depth_draft,
+                                        &mut self.dialogs.properties_iteration_depth_draft,
                                     )
                                     .range(1..=maximum),
                                 );
@@ -336,12 +340,12 @@ impl Editor {
                         }
                     }
                     ui.radio_value(
-                        &mut self.properties_iteration_final_only_draft,
+                        &mut self.dialogs.properties_iteration_final_only_draft,
                         false,
                         tr("Show all iterations"),
                     );
                     ui.radio_value(
-                        &mut self.properties_iteration_final_only_draft,
+                        &mut self.dialogs.properties_iteration_final_only_draft,
                         true,
                         tr("Show final iteration only"),
                     );
@@ -353,12 +357,12 @@ impl Editor {
                     ui.heading(tr("Axis"));
                     ui.label(tr("Label tick values using"));
                     ui.radio_value(
-                        &mut self.properties_axis_pi_labels_draft,
+                        &mut self.dialogs.properties_axis_pi_labels_draft,
                         false,
                         tr("Decimal numbers"),
                     );
                     ui.radio_value(
-                        &mut self.properties_axis_pi_labels_draft,
+                        &mut self.dialogs.properties_axis_pi_labels_draft,
                         true,
                         tr("Fractions and multiples of π"),
                     );
@@ -370,20 +374,24 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.label(tr("Sample count"));
                         ui.add(
-                            egui::DragValue::new(&mut self.properties_sampled_image_samples_draft)
-                                .range(
-                                    SampledImageDefinition::MIN_EDITABLE_SAMPLES
-                                        ..=SampledImageDefinition::MAX_EDITABLE_SAMPLES,
-                                ),
+                            egui::DragValue::new(
+                                &mut self.dialogs.properties_sampled_image_samples_draft,
+                            )
+                            .range(
+                                SampledImageDefinition::MIN_EDITABLE_SAMPLES
+                                    ..=SampledImageDefinition::MAX_EDITABLE_SAMPLES,
+                            ),
                         );
                     });
                     egui::ComboBox::from_label(tr("Allowed distortion"))
-                        .selected_text(tr(match self.properties_sampled_image_distortion_draft {
-                            SampledImageDistortion::None => "None",
-                            SampledImageDistortion::Some => "Some",
-                            SampledImageDistortion::Most => "Most",
-                            SampledImageDistortion::All => "All",
-                        }))
+                        .selected_text(tr(
+                            match self.dialogs.properties_sampled_image_distortion_draft {
+                                SampledImageDistortion::None => "None",
+                                SampledImageDistortion::Some => "Some",
+                                SampledImageDistortion::Most => "Most",
+                                SampledImageDistortion::All => "All",
+                            },
+                        ))
                         .show_ui(ui, |ui| {
                             for (value, label) in [
                                 (SampledImageDistortion::None, "None"),
@@ -392,7 +400,7 @@ impl Editor {
                                 (SampledImageDistortion::All, "All"),
                             ] {
                                 ui.selectable_value(
-                                    &mut self.properties_sampled_image_distortion_draft,
+                                    &mut self.dialogs.properties_sampled_image_distortion_draft,
                                     value,
                                     label,
                                 );
@@ -413,34 +421,35 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.label(tr("Domain"));
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.properties_plot_min_draft)
+                            egui::TextEdit::singleline(&mut self.dialogs.properties_plot_min_draft)
                                 .desired_width(70.),
                         );
                         ui.label(tr(format!("≤ {variable} ≤")));
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.properties_plot_max_draft)
+                            egui::TextEdit::singleline(&mut self.dialogs.properties_plot_max_draft)
                                 .desired_width(70.),
                         );
                     });
                     ui.horizontal(|ui| {
                         ui.label(tr("Samples"));
                         ui.add(
-                            egui::DragValue::new(&mut self.properties_plot_samples_draft)
+                            egui::DragValue::new(&mut self.dialogs.properties_plot_samples_draft)
                                 .range(MIN_EDITABLE_PLOT_SAMPLES..=MAX_EDITABLE_PLOT_SAMPLES),
                         );
                     });
                     ui.radio_value(
-                        &mut self.properties_plot_presentation_draft.discrete,
+                        &mut self.dialogs.properties_plot_presentation_draft.discrete,
                         false,
                         tr("Continuously"),
                     );
                     ui.radio_value(
-                        &mut self.properties_plot_presentation_draft.discrete,
+                        &mut self.dialogs.properties_plot_presentation_draft.discrete,
                         true,
                         tr("Discretely"),
                     );
                     ui.checkbox(
                         &mut self
+                            .dialogs
                             .properties_plot_presentation_draft
                             .show_arrows_and_endpoints,
                         tr("Show arrows and endpoints"),
@@ -450,9 +459,15 @@ impl Editor {
                 if matches!(object.kind, Kind::HideShowButton { .. }) {
                     ui.separator();
                     ui.heading(tr("Hide/Show Button"));
-                    let mut mode = if self.properties_visibility_options_draft.alternates() {
+                    let mut mode = if self
+                        .dialogs
+                        .properties_visibility_options_draft
+                        .alternates()
+                    {
                         2
-                    } else if self.properties_visibility_action_draft == VisibilityAction::Show {
+                    } else if self.dialogs.properties_visibility_action_draft
+                        == VisibilityAction::Show
+                    {
                         0
                     } else {
                         1
@@ -463,36 +478,43 @@ impl Editor {
                     ui.radio_value(&mut mode, 2, tr("Toggle hide/show"));
                     if mode != before {
                         if mode < 2 {
-                            self.properties_visibility_action_draft = if mode == 0 {
+                            self.dialogs.properties_visibility_action_draft = if mode == 0 {
                                 VisibilityAction::Show
                             } else {
                                 VisibilityAction::Hide
                             };
                         }
-                        self.properties_visibility_options_draft = self
+                        self.dialogs.properties_visibility_options_draft = self
+                            .dialogs
                             .properties_visibility_options_draft
                             .with_alternates(mode == 2);
                         hide_show_settings_changed = true;
                     }
-                    let mut fade = self.properties_visibility_options_draft.fade();
-                    let mut select = self.properties_visibility_options_draft.select_after_show();
+                    let mut fade = self.dialogs.properties_visibility_options_draft.fade();
+                    let mut select = self
+                        .dialogs
+                        .properties_visibility_options_draft
+                        .select_after_show();
                     if ui.checkbox(&mut fade, tr("Use fade effect")).changed() {
-                        self.properties_visibility_options_draft =
-                            self.properties_visibility_options_draft.with_fade(fade);
+                        self.dialogs.properties_visibility_options_draft = self
+                            .dialogs
+                            .properties_visibility_options_draft
+                            .with_fade(fade);
                         hide_show_settings_changed = true;
                     }
                     if ui
                         .checkbox(&mut select, tr("Select objects after showing"))
                         .changed()
                     {
-                        self.properties_visibility_options_draft = self
+                        self.dialogs.properties_visibility_options_draft = self
+                            .dialogs
                             .properties_visibility_options_draft
                             .with_select_after_show(select);
                         hide_show_settings_changed = true;
                     }
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     ui.horizontal(|ui| {
                         apply_hide_show_caption = ui.button(tr("Apply Caption")).clicked();
@@ -506,7 +528,7 @@ impl Editor {
                         ui.label(tr("Choose a target to set its motion:"));
                         for (index, target) in targets.iter().enumerate() {
                             ui.selectable_value(
-                                &mut self.properties_animation_target_draft,
+                                &mut self.dialogs.properties_animation_target_draft,
                                 index,
                                 tr(format!("Object {target}")),
                             );
@@ -514,17 +536,20 @@ impl Editor {
                         ui.separator();
                     }
                     let selected = self
+                        .dialogs
                         .properties_animation_target_draft
                         .min(targets.len().saturating_sub(1));
                     if let (Some(&target), Some(settings)) = (
                         targets.get(selected),
-                        self.properties_animation_settings_draft.get_mut(selected),
+                        self.dialogs
+                            .properties_animation_settings_draft
+                            .get_mut(selected),
                     ) {
                         animation_settings_ui(&self.doc, ui, target, settings);
                     }
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_animation_properties =
                         ui.button(tr("Apply Animation Settings")).clicked();
@@ -540,7 +565,7 @@ impl Editor {
                     }
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_sound_caption = ui.button(tr("Apply Caption")).clicked();
                 }
@@ -554,22 +579,26 @@ impl Editor {
                     }
                     movement_settings_ui(
                         ui,
-                        &mut self.properties_movement_speed_draft,
-                        &mut self.properties_movement_follow_draft,
+                        &mut self.dialogs.properties_movement_speed_draft,
+                        &mut self.dialogs.properties_movement_follow_draft,
                     );
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_movement_properties = ui.button(tr("Apply Movement Settings")).clicked();
                 }
                 if let Kind::ScrollButton { target, .. } = &object.kind {
                     ui.separator();
                     ui.heading(tr("Scroll Button"));
-                    scroll_settings_ui(ui, *target, &mut self.properties_scroll_placement_draft);
+                    scroll_settings_ui(
+                        ui,
+                        *target,
+                        &mut self.dialogs.properties_scroll_placement_draft,
+                    );
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_scroll_properties = ui.button(tr("Apply Scroll Settings")).clicked();
                 }
@@ -579,12 +608,12 @@ impl Editor {
                     presentation_settings_ui(
                         ui,
                         targets.len(),
-                        &mut self.properties_presentation_mode_draft,
-                        &mut self.properties_presentation_options_draft,
+                        &mut self.dialogs.properties_presentation_mode_draft,
+                        &mut self.dialogs.properties_presentation_options_draft,
                     );
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_presentation_properties =
                         ui.button(tr("Apply Presentation Settings")).clicked();
@@ -595,10 +624,10 @@ impl Editor {
                 ) {
                     ui.separator();
                     ui.heading(tr("Link Button"));
-                    link_settings_ui(&self.doc, ui, &mut self.properties_link_draft);
+                    link_settings_ui(&self.doc, ui, &mut self.dialogs.properties_link_draft);
                     ui.horizontal(|ui| {
                         ui.label(tr("Caption"));
-                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                        ui.text_edit_singleline(&mut self.dialogs.properties_label_draft);
                     });
                     apply_link_properties = ui.button(tr("Apply Link Settings")).clicked();
                 }
@@ -643,8 +672,8 @@ impl Editor {
         if apply_label {
             match self.doc.set_object_label(
                 id,
-                &self.properties_label_draft,
-                self.properties_label_visible_draft,
+                &self.dialogs.properties_label_draft,
+                self.dialogs.properties_label_visible_draft,
             ) {
                 Ok(true) => self.status = format!("Updated the label for {description}"),
                 Ok(false) => {}
@@ -654,7 +683,7 @@ impl Editor {
         if apply_opacity {
             match self
                 .doc
-                .set_object_polygon_opacity(id, self.properties_opacity_draft)
+                .set_object_polygon_opacity(id, self.dialogs.properties_opacity_draft)
             {
                 Ok(true) => self.status = format!("Updated the opacity for {description}"),
                 Ok(false) => {}
@@ -667,12 +696,12 @@ impl Editor {
                 .iteration_properties(id)
                 .and_then(|(_, depth, _, _)| {
                     matches!(depth, IterationDepth::Fixed(_))
-                        .then_some(self.properties_iteration_depth_draft)
+                        .then_some(self.dialogs.properties_iteration_depth_draft)
                 });
             match self.doc.set_iteration_properties(
                 id,
                 fixed_depth,
-                self.properties_iteration_final_only_draft,
+                self.dialogs.properties_iteration_final_only_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -682,7 +711,7 @@ impl Editor {
         if apply_axis_properties {
             match self
                 .doc
-                .set_axis_uses_pi_labels(id, self.properties_axis_pi_labels_draft)
+                .set_axis_uses_pi_labels(id, self.dialogs.properties_axis_pi_labels_draft)
             {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -692,8 +721,8 @@ impl Editor {
         if apply_sampled_image_properties {
             match self.doc.set_sampled_image_properties(
                 id,
-                self.properties_sampled_image_samples_draft,
-                self.properties_sampled_image_distortion_draft,
+                self.dialogs.properties_sampled_image_samples_draft,
+                self.dialogs.properties_sampled_image_distortion_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -703,11 +732,13 @@ impl Editor {
         if apply_plot_properties {
             let result = (|| -> Result<bool, String> {
                 let min = self
+                    .dialogs
                     .properties_plot_min_draft
                     .trim()
                     .parse()
                     .map_err(|_| "Invalid domain start")?;
                 let max = self
+                    .dialogs
                     .properties_plot_max_draft
                     .trim()
                     .parse()
@@ -716,8 +747,8 @@ impl Editor {
                     id,
                     min,
                     max,
-                    self.properties_plot_samples_draft,
-                    self.properties_plot_presentation_draft,
+                    self.dialogs.properties_plot_samples_draft,
+                    self.dialogs.properties_plot_presentation_draft,
                 )
             })();
             match result {
@@ -727,21 +758,21 @@ impl Editor {
             }
         }
         if hide_show_settings_changed {
-            let previous_label = match &self.doc.objects[id - 1].kind {
+            let previous_label = match &self.doc.objects()[id - 1].kind {
                 Kind::HideShowButton { label, .. } => label.clone(),
                 _ => String::new(),
             };
             match self.doc.set_hide_show_button_action_and_options(
                 id,
-                self.properties_visibility_action_draft,
-                self.properties_visibility_options_draft,
+                self.dialogs.properties_visibility_action_draft,
+                self.dialogs.properties_visibility_options_draft,
             ) {
                 Ok(true) => {
                     self.status = format!("Updated {description}");
-                    if self.properties_label_draft == previous_label
-                        && let Kind::HideShowButton { label, .. } = &self.doc.objects[id - 1].kind
+                    if self.dialogs.properties_label_draft == previous_label
+                        && let Kind::HideShowButton { label, .. } = &self.doc.objects()[id - 1].kind
                     {
-                        self.properties_label_draft = label.clone();
+                        self.dialogs.properties_label_draft = label.clone();
                     }
                 }
                 Ok(false) => {}
@@ -751,7 +782,7 @@ impl Editor {
         if apply_hide_show_caption {
             match self
                 .doc
-                .set_hide_show_button_caption(id, &self.properties_label_draft)
+                .set_hide_show_button_caption(id, &self.dialogs.properties_label_draft)
             {
                 Ok(()) => self.status = format!("Updated the caption for {description}"),
                 Err(error) => self.status = error,
@@ -761,8 +792,8 @@ impl Editor {
             match self.doc.reset_hide_show_button_caption(id) {
                 Ok(()) => {
                     self.status = format!("Reset the caption for {description}");
-                    if let Kind::HideShowButton { label, .. } = &self.doc.objects[id - 1].kind {
-                        self.properties_label_draft = label.clone();
+                    if let Kind::HideShowButton { label, .. } = &self.doc.objects()[id - 1].kind {
+                        self.dialogs.properties_label_draft = label.clone();
                     }
                 }
                 Err(error) => self.status = error,
@@ -771,8 +802,8 @@ impl Editor {
         if apply_animation_properties {
             match self.doc.set_animation_button_properties(
                 id,
-                &self.properties_animation_settings_draft,
-                &self.properties_label_draft,
+                &self.dialogs.properties_animation_settings_draft,
+                &self.dialogs.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -782,7 +813,7 @@ impl Editor {
         if apply_sound_caption {
             match self
                 .doc
-                .set_sound_button_caption(id, &self.properties_label_draft)
+                .set_sound_button_caption(id, &self.dialogs.properties_label_draft)
             {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -792,9 +823,9 @@ impl Editor {
         if apply_movement_properties {
             match self.doc.set_movement_button_properties(
                 id,
-                self.properties_movement_speed_draft,
-                self.properties_movement_follow_draft,
-                &self.properties_label_draft,
+                self.dialogs.properties_movement_speed_draft,
+                self.dialogs.properties_movement_follow_draft,
+                &self.dialogs.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -804,8 +835,8 @@ impl Editor {
         if apply_scroll_properties {
             match self.doc.set_scroll_button_properties(
                 id,
-                self.properties_scroll_placement_draft,
-                &self.properties_label_draft,
+                self.dialogs.properties_scroll_placement_draft,
+                &self.dialogs.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -815,9 +846,9 @@ impl Editor {
         if apply_presentation_properties {
             match self.doc.set_presentation_button_properties(
                 id,
-                self.properties_presentation_mode_draft,
-                self.properties_presentation_options_draft,
-                &self.properties_label_draft,
+                self.dialogs.properties_presentation_mode_draft,
+                self.dialogs.properties_presentation_options_draft,
+                &self.dialogs.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
@@ -825,18 +856,18 @@ impl Editor {
             }
         }
         if apply_link_properties {
-            let result = if self.properties_link_draft.use_page {
+            let result = if self.dialogs.properties_link_draft.use_page {
                 self.doc.set_link_page_button_properties(
                     id,
-                    self.properties_link_draft.target_page,
-                    self.properties_link_draft.target_button_ordinal,
-                    &self.properties_label_draft,
+                    self.dialogs.properties_link_draft.target_page,
+                    self.dialogs.properties_link_draft.target_button_ordinal,
+                    &self.dialogs.properties_label_draft,
                 )
             } else {
                 self.doc.set_link_url_button_properties(
                     id,
-                    &self.properties_link_draft.url,
-                    &self.properties_label_draft,
+                    &self.dialogs.properties_link_draft.url,
+                    &self.dialogs.properties_label_draft,
                 )
             };
             match result {
@@ -846,8 +877,8 @@ impl Editor {
             }
         }
         if edit_parameter {
-            self.properties_dialog = None;
-            self.properties_draft_for = None;
+            self.dialogs.properties_dialog = None;
+            self.dialogs.properties_draft_for = None;
             if let Err(error) = self.begin_parameter_dialog(id) {
                 self.status = error;
             }
@@ -855,11 +886,11 @@ impl Editor {
         }
         if let Some(related) = navigate_to {
             self.select_only(related);
-            self.properties_dialog = Some(related);
-            self.properties_draft_for = None;
+            self.dialogs.properties_dialog = Some(related);
+            self.dialogs.properties_draft_for = None;
         } else if !open {
-            self.properties_dialog = None;
-            self.properties_draft_for = None;
+            self.dialogs.properties_dialog = None;
+            self.dialogs.properties_draft_for = None;
         }
     }
 }

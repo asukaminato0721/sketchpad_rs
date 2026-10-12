@@ -16,7 +16,8 @@ fn presentation_buttons_activate_parents_and_wait_for_motion() {
         scale: 1.,
         center: editor.center,
     };
-    let Kind::PresentationButton { label, anchor, .. } = &editor.doc.objects[presentation - 1].kind
+    let Kind::PresentationButton { label, anchor, .. } =
+        &editor.doc.objects()[presentation - 1].kind
     else {
         panic!()
     };
@@ -24,8 +25,8 @@ fn presentation_buttons_activate_parents_and_wait_for_motion() {
         .action_button_rect(&viewport, *anchor, label)
         .center();
     editor.click(&viewport, click, false);
-    assert!(!editor.doc.objects[0].visible);
-    assert!(!editor.doc.objects[1].visible);
+    assert!(!editor.doc.objects()[0].visible);
+    assert!(!editor.doc.objects()[1].visible);
     assert!(editor.presentations.is_empty());
 
     let mut doc = Document::new();
@@ -45,13 +46,13 @@ fn presentation_buttons_activate_parents_and_wait_for_motion() {
         .activate_presentation_button(presentation, &viewport, 0)
         .unwrap();
     assert_eq!(editor.presentations.len(), 1);
-    assert!(editor.doc.objects[destination - 1].visible);
+    assert!(editor.doc.objects()[destination - 1].visible);
     for _ in 0..9 {
         editor.tick_movement(0.1);
         editor.tick_presentations(0.1);
     }
     assert_eq!(editor.doc.position(source), Some(Point { x: 120., y: 0. }));
-    assert!(!editor.doc.objects[destination - 1].visible);
+    assert!(!editor.doc.objects()[destination - 1].visible);
     assert!(editor.presentations.is_empty());
 
     let mut doc = Document::new();
@@ -74,12 +75,12 @@ fn presentation_buttons_activate_parents_and_wait_for_motion() {
     editor
         .activate_presentation_button(presentation, &viewport, 0)
         .unwrap();
-    assert!(!editor.doc.objects[first - 1].visible);
-    assert!(editor.doc.objects[second - 1].visible);
+    assert!(!editor.doc.objects()[first - 1].visible);
+    assert!(editor.doc.objects()[second - 1].visible);
     editor.tick_presentations(0.1);
-    assert!(editor.doc.objects[second - 1].visible);
+    assert!(editor.doc.objects()[second - 1].visible);
     editor.tick_presentations(0.1);
-    assert!(!editor.doc.objects[second - 1].visible);
+    assert!(!editor.doc.objects()[second - 1].visible);
 
     let mut doc = Document::new();
     let old_source = doc.add(Kind::Free(Point { x: 0., y: 10. }));
@@ -150,14 +151,14 @@ fn sketchdoc_link_button_opens_sibling_document() {
         scale: editor.scale,
         center: editor.center,
     };
-    let Kind::LinkUrlButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+    let Kind::LinkUrlButton { label, anchor, .. } = &editor.doc.objects()[1].kind else {
         panic!();
     };
     let click = editor
         .action_button_rect(&viewport, *anchor, label)
         .center();
     editor.click(&viewport, click, false);
-    assert_eq!(editor.doc.objects.len(), 1);
+    assert_eq!(editor.doc.objects().len(), 1);
     assert_eq!(
         editor.doc.path.as_ref().unwrap().file_name().unwrap(),
         "point.gsp"
@@ -194,7 +195,7 @@ fn page_link_buttons_switch_pages() {
             scale: editor.scale,
             center: editor.center,
         };
-        let Kind::LinkPageButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+        let Kind::LinkPageButton { label, anchor, .. } = &editor.doc.objects()[1].kind else {
             panic!();
         };
         let click = editor

@@ -39,18 +39,23 @@ is absent from that update. Repeated changes to `A` reuse the same plan.
 ```rust
 let c = doc.add(Kind::Midpoint(a, b)); // records input connections now
 doc.move_point(a, next_position);     // records a change; retains graph identity
-{
-    let mut object = doc.objects.edit(c - 1); // zero-based storage slot
+doc.edit_object(c, |object| { // positive object ID
     object.kind = Kind::Midpoint(a, another_point);
     object.midpoint_host = None;
-} // replaces connections and records the change, even on an early return
+})?; // records connections, one undo step, and the document's dirty state
 ```
 
-`objects` is a read-only slice view with tracked mutation methods, not a public
-`Vec`. Mutable indexing and mutable slice access are unavailable. `get_mut` and
-`iter_mut` yield the same editing guards. Replacing the entire collection uses
-`Vec<Object>::into()` and registers all connections again. Existing editing,
-clipboard, tool expansion, import, save, and undo paths use this boundary.
+`Document::objects()` returns a shared view. The object collection and undo/redo
+stacks are private. `edit_object` rejects changes to object identity before it
+changes the document. A no-op edit does not change history or the dirty state.
+`Document::transaction` applies a compound operation to an isolated candidate.
+An error or panic discards that candidate. Successful nested operations produce
+one undo step. Use `undo_len()` and `redo_len()` to inspect history availability.
+
+Inside the engine, `ObjectStore` uses editing guards to record connections on
+drop, including early returns and unwinding. Mutable indexing and mutable slice
+access are unavailable. `get_mut` and `iter_mut` return these guards. Import and
+undo can replace the internal collection and register its connections again.
 
 The change journal is bounded to 256 edits. Each evaluated view independently
 reads events since its previous revision; events are not consumed by a reader.

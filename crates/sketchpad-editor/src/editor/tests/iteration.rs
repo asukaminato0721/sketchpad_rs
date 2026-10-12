@@ -29,7 +29,7 @@ fn selected_triangle_and_two_mappings_create_branch_iteration() {
         .extend(editor.selection_order.iter().copied());
     editor.iterate_selected(2);
     assert!(matches!(
-        editor.doc.objects[8].kind,
+        editor.doc.objects()[8].kind,
         Kind::BranchingPolygonIteration {
             depth: IterationDepth::Value(8),
             ..
@@ -92,7 +92,7 @@ fn selected_point_parameter_mapping_creates_numeric_iteration() {
         .extend([seed, image, parameter, calculation, label]);
     editor.iterate_selected(3);
     assert_eq!(
-        editor.doc.objects[6].kind,
+        editor.doc.objects()[6].kind,
         Kind::PointParameterIteration(
             seed,
             parameter,
@@ -134,7 +134,7 @@ fn numeric_iteration_selection_maps_second_formula_source() {
     editor.iterate_selected(3);
     let iteration = editor
         .doc
-        .objects
+        .objects()
         .iter()
         .find(|object| !object.deleted && matches!(object.kind, Kind::PointParameterIteration(..)))
         .unwrap();
@@ -187,7 +187,7 @@ fn numeric_iteration_selection_uses_calculation_source_and_distinct_depth() {
         .extend(editor.selection_order.iter().copied());
     editor.iterate_selected(3);
     assert_eq!(
-        editor.doc.objects[6].kind,
+        editor.doc.objects()[6].kind,
         Kind::PointParameterIteration(
             seed,
             parameter,
@@ -254,9 +254,9 @@ fn calculated_marked_angle_and_depth_create_regular_polygon() {
     editor.selection_order.push(center);
     editor.doc.selected.insert(center);
     editor.rotate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::CalculatedAngleRotatedPoint(seed, center, angle)
     );
     let segment = editor.doc.add(Kind::Segment(seed, image));
@@ -266,7 +266,7 @@ fn calculated_marked_angle_and_depth_create_regular_polygon() {
     editor.iterate_selected(4);
     let iteration = 8;
     assert_eq!(
-        editor.doc.objects[iteration - 1].kind,
+        editor.doc.objects()[iteration - 1].kind,
         Kind::SegmentIteration(seed, image, segment, IterationDepth::Value(depth))
     );
     editor.doc.set_parameter_value(n, 6.).unwrap();
@@ -301,7 +301,7 @@ fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
     editor.iterate_selected(4);
     let id = *editor.doc.selected.iter().next().unwrap();
     assert!(matches!(
-        editor.doc.objects[id - 1].kind,
+        editor.doc.objects()[id - 1].kind,
         Kind::PointIteration(3, 6, IterationDepth::Value(5))
     ));
     editor.doc.set_parameter_value(1, 6.).unwrap();
@@ -316,7 +316,7 @@ fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
     editor.iterate_selected(4);
     let live = *editor.doc.selected.iter().next().unwrap();
     assert!(
-        matches!(editor.doc.objects[live-1].kind,Kind::PointIteration(3,6,IterationDepth::Value(value)) if value==literal)
+        matches!(editor.doc.objects()[live-1].kind,Kind::PointIteration(3,6,IterationDepth::Value(value)) if value==literal)
     );
     assert_eq!(editor.doc.point_iteration_images(live).unwrap().len(), 5);
     assert!(
@@ -349,6 +349,9 @@ fn mapped_midpoint_iteration_point_binding_is_pickable_and_styles_survive_save()
         .set_selected_point_style(sketchpad_engine::style_records::PointStyle::Large)
         .unwrap();
     editor.doc.verify_roundtrip().unwrap();
-    editor.doc.objects.edit(13).visible = false;
+    editor
+        .doc
+        .edit_object(14, |object| object.visible = false)
+        .unwrap();
     assert_ne!(editor.hit(&vp, vp.screen(point)), Some(14));
 }

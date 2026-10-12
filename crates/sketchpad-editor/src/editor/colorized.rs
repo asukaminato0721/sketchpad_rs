@@ -15,7 +15,7 @@ impl Editor {
             .copied()
             .filter(|id| {
                 self.doc
-                    .objects
+                    .objects()
                     .get(id.saturating_sub(1))
                     .is_some_and(|o| o.kind.numeric_unit().is_some())
             })
@@ -60,28 +60,34 @@ impl Editor {
             return;
         }
         // Preflight the complete selection; a command is one undoable operation.
-        let mut candidate = self.doc.clone();
-        let mut outputs = Vec::new();
-        for source in &sources {
-            match candidate.add_colorized(
-                *source,
-                binding.clone(),
-                0.,
-                1.,
-                ColorRangeBehavior::Reflect,
-            ) {
-                Ok(id) => {
-                    candidate.objects.edit(*source - 1).visible = false;
-                    outputs.push(id);
-                }
-                Err(error) => {
-                    self.status = error;
-                    return;
+        let result = self.doc.transaction(|candidate| {
+            let mut outputs = Vec::new();
+            for source in &sources {
+                match candidate.add_colorized(
+                    *source,
+                    binding.clone(),
+                    0.,
+                    1.,
+                    ColorRangeBehavior::Reflect,
+                ) {
+                    Ok(id) => {
+                        candidate.edit_object(*source, |object| object.visible = false)?;
+                        outputs.push(id);
+                    }
+                    Err(error) => {
+                        return Err(error);
+                    }
                 }
             }
-        }
-        candidate.undo.truncate(self.doc.undo.len() + 1);
-        self.doc = candidate;
+            Ok(outputs)
+        });
+        let outputs = match result {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
         self.doc.selected = outputs.iter().copied().collect();
         self.selection_order = outputs;
         self.status = "Created live colors from the selected values (range 0–1, reflected)".into();

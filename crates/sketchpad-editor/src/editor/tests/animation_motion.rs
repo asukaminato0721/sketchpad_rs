@@ -16,7 +16,7 @@ fn four_source_polygon_button_moves_all_vertices() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[5].kind else {
         panic!("Expected Animation button")
     };
     let click = editor
@@ -58,7 +58,7 @@ fn six_source_polygon_button_moves_all_vertices() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[7].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[7].kind else {
         panic!("Expected Animation button")
     };
     let click = editor
@@ -125,7 +125,7 @@ fn page_two_segment_animation_button_creates_and_runs() {
         scale: 1.,
         center: Point { x: 200., y: 150. },
     };
-    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+    let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects()[5].kind else {
         panic!("Expected Animation button")
     };
     let click = editor
@@ -234,7 +234,7 @@ fn animation_stopped_file_from_desktop_roundtrips() {
     let document = Document::from_bytes(bytes, None).unwrap();
     assert!(!document.partial_view);
     assert_eq!(document.encode().unwrap(), bytes);
-    let Kind::PointOnSegment(3, t) = document.objects[3].kind else {
+    let Kind::PointOnSegment(3, t) = document.objects()[3].kind else {
         panic!("Animated point lost its segment constraint");
     };
     assert!((0.6..0.9).contains(&t));

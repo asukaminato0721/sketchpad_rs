@@ -24,7 +24,7 @@ impl Editor {
         let current = self.doc.selected.clone();
         let related: Vec<_> = if children {
             self.doc
-                .objects
+                .objects()
                 .iter()
                 .filter(|object| {
                     object.page == self.doc.active_page && object.visible && !object.deleted
@@ -40,13 +40,13 @@ impl Editor {
                 .collect()
         } else {
             self.doc
-                .objects
+                .objects()
                 .iter()
                 .filter(|object| current.contains(&object.id))
                 .flat_map(|object| self.doc.dependencies_of(object.id).unwrap_or_default())
                 .filter(|id| {
                     self.doc
-                        .objects
+                        .objects()
                         .get(id.saturating_sub(1))
                         .is_some_and(|object| {
                             object.page == self.doc.active_page && object.visible && !object.deleted
@@ -139,7 +139,7 @@ impl Editor {
                 let hit = self.hit(v, p);
                 if !multi
                     && let Some(id) = hit
-                    && matches!(self.doc.objects[id - 1].kind, Kind::HideShowButton { .. })
+                    && matches!(self.doc.objects()[id - 1].kind, Kind::HideShowButton { .. })
                 {
                     match self.doc.activate_hide_show_button(id) {
                         Ok(()) => self.status = format!("Activated button {id}"),
@@ -152,7 +152,7 @@ impl Editor {
                     && let Some(id) = hit
                     && let Kind::AnimationButton {
                         targets, settings, ..
-                    } = &self.doc.objects[id - 1].kind
+                    } = &self.doc.objects()[id - 1].kind
                 {
                     let targets = targets.clone();
                     let settings = settings.clone();
@@ -162,7 +162,7 @@ impl Editor {
                 }
                 if !multi
                     && let Some(id) = hit
-                    && matches!(self.doc.objects[id - 1].kind, Kind::SoundButton { .. })
+                    && matches!(self.doc.objects()[id - 1].kind, Kind::SoundButton { .. })
                 {
                     if let Err(error) = self.activate_sound_button(id) {
                         self.status = error;
@@ -172,7 +172,7 @@ impl Editor {
                 }
                 if !multi
                     && let Some(id) = hit
-                    && matches!(self.doc.objects[id - 1].kind, Kind::MovementButton { .. })
+                    && matches!(self.doc.objects()[id - 1].kind, Kind::MovementButton { .. })
                 {
                     self.activate_movement_button(id);
                     self.selection_order.clear();
@@ -182,7 +182,7 @@ impl Editor {
                     && let Some(id) = hit
                     && let Kind::ScrollButton {
                         target, placement, ..
-                    } = self.doc.objects[id - 1].kind
+                    } = self.doc.objects()[id - 1].kind
                 {
                     if let Err(error) = self.scroll_to_button_target(target, placement, v) {
                         self.status = error;
@@ -193,7 +193,7 @@ impl Editor {
                 if !multi
                     && let Some(id) = hit
                     && matches!(
-                        self.doc.objects[id - 1].kind,
+                        self.doc.objects()[id - 1].kind,
                         Kind::PresentationButton { .. }
                     )
                 {
@@ -205,7 +205,7 @@ impl Editor {
                 }
                 if !multi
                     && let Some(id) = hit
-                    && let Kind::LinkUrlButton { url, .. } = &self.doc.objects[id - 1].kind
+                    && let Kind::LinkUrlButton { url, .. } = &self.doc.objects()[id - 1].kind
                 {
                     let url = url.clone();
                     if let Err(error) = self.activate_link_url(&url) {
@@ -220,7 +220,7 @@ impl Editor {
                         target_page,
                         target_button_ordinal,
                         ..
-                    } = self.doc.objects[id - 1].kind
+                    } = self.doc.objects()[id - 1].kind
                 {
                     if let Err(error) =
                         self.activate_link_page(target_page, target_button_ordinal, v, 0)
@@ -229,7 +229,7 @@ impl Editor {
                     }
                     return;
                 }
-                let hit = hit.filter(|id| self.doc.objects[*id - 1].arrow_selectable);
+                let hit = hit.filter(|id| self.doc.objects()[*id - 1].arrow_selectable);
                 if !multi && (hit.is_some() || !self.preferences.double_click_deselection) {
                     self.doc.selected.clear();
                     self.selection_order.clear();

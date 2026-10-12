@@ -37,32 +37,19 @@ struct Record {
 
 fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     if bytes.get(..4) != Some(b"GSP4") {
-        return Err("Expected GSP4".into());
+        return Err("Expected a GSP4 document".into());
     }
-    let mut at = 4;
-    let mut out = Vec::new();
-    while at < bytes.len() {
-        if at + 8 > bytes.len() {
-            return Err("Truncated GSP record".into());
-        }
-        let len = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
-        let payload = at + 8;
-        let end = payload
-            .checked_add(len)
-            .and_then(|v| v.checked_add(len % 2))
-            .ok_or("GSP record length overflow")?;
-        if end > bytes.len() {
-            return Err("Truncated GSP payload".into());
-        }
-        out.push(Record {
-            kind: u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()),
-            start: at,
-            payload,
-            end,
-        });
-        at = end;
-    }
-    Ok(out)
+    sketchpad_format::records_from(bytes, 4).map(|records| {
+        records
+            .into_iter()
+            .map(|record| Record {
+                kind: record.kind,
+                start: record.start,
+                end: record.end,
+                payload: record.data.start,
+            })
+            .collect()
+    })
 }
 
 /// Font tables in embedded tool canvases belong to independent namespaces.

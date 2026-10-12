@@ -29,10 +29,10 @@ impl Editor {
                     && self.tool == Tool::Select
                     && let Some(p) = ui.input(|i| i.pointer.press_origin())
                     && let Some(id) = self.hit(&vp, p)
-                    && self.doc.objects[id - 1].arrow_selectable
-                    && (self.doc.objects[id - 1].measurement_anchor.is_some()
+                    && self.doc.objects()[id - 1].arrow_selectable
+                    && (self.doc.objects()[id - 1].measurement_anchor.is_some()
                         || matches!(
-                            self.doc.objects[id - 1].kind,
+                            self.doc.objects()[id - 1].kind,
                             Kind::Free(_)
                                 | Kind::GraphVerticalUnit(_, _)
                                 | Kind::Image { .. }
@@ -57,11 +57,11 @@ impl Editor {
                         ))
                 {
                     self.drag_offset = if let Some((x, y)) =
-                        self.doc.objects[id - 1].measurement_anchor
+                        self.doc.objects()[id - 1].measurement_anchor
                     {
                         p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
                     } else {
-                        match &self.doc.objects[id - 1].kind {
+                        match &self.doc.objects()[id - 1].kind {
                             Kind::ReferencedText { text, .. } => {
                                 let (x, y) = text.stored_origin();
                                 p - vp.screen(Point {
@@ -110,7 +110,7 @@ impl Editor {
                 if response.dragged()
                     && let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos())
                 {
-                    if self.doc.objects[id - 1].measurement_anchor.is_some() {
+                    if self.doc.objects()[id - 1].measurement_anchor.is_some() {
                         let at = p - self.drag_offset - vp.rect.min;
                         if let Err(error) = self.doc.drag_measurement_caption(
                             id,
@@ -118,20 +118,20 @@ impl Editor {
                         ) {
                             self.status = error;
                         }
-                    } else if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
+                    } else if matches!(self.doc.objects()[id - 1].kind, Kind::Image { .. }) {
                         if let Err(error) = self.doc.drag_image(id, vp.world(p - self.drag_offset))
                         {
                             self.status = error;
                         }
                     } else if matches!(
-                        self.doc.objects[id - 1].kind,
+                        self.doc.objects()[id - 1].kind,
                         Kind::PlainText { .. } | Kind::ReferencedText { .. }
                     ) {
                         if let Err(error) = self.doc.drag_text(id, vp.world(p - self.drag_offset)) {
                             self.status = error;
                         }
                     } else if matches!(
-                        self.doc.objects[id - 1].kind,
+                        self.doc.objects()[id - 1].kind,
                         Kind::Parameter(_)
                             | Kind::Calculation(_)
                             | Kind::MeasuredCalculation(_, _)
@@ -165,9 +165,9 @@ impl Editor {
                 {
                     let hit = self
                         .hit(&vp, p)
-                        .filter(|id| self.doc.objects[*id - 1].arrow_selectable);
+                        .filter(|id| self.doc.objects()[*id - 1].arrow_selectable);
                     if let Some(id) = hit {
-                        match self.doc.objects[id - 1].kind {
+                        match self.doc.objects()[id - 1].kind {
                             Kind::FunctionDefinition(_)
                             | Kind::ReferencedFunction(_, _)
                             | Kind::Calculation(_) => {
@@ -184,14 +184,14 @@ impl Editor {
                             | Kind::ParametricPlot(..)
                             | Kind::ParameterLocus(..) => {
                                 if let Some((min, max, samples)) = self.doc.plot_range(id) {
-                                    self.plot_range_dialog = Some(id);
-                                    self.plot_min_draft = min.to_string();
-                                    self.plot_max_draft = max.to_string();
-                                    self.plot_samples_draft = samples.to_string();
+                                    self.dialogs.plot_range_dialog = Some(id);
+                                    self.dialogs.plot_min_draft = min.to_string();
+                                    self.dialogs.plot_max_draft = max.to_string();
+                                    self.dialogs.plot_samples_draft = samples.to_string();
                                     if let Some((_, _, _, presentation)) =
                                         self.doc.plot_properties(id)
                                     {
-                                        self.plot_presentation_draft = presentation;
+                                        self.dialogs.plot_presentation_draft = presentation;
                                     }
                                 }
                             }
@@ -325,7 +325,7 @@ impl Editor {
                 }
                 let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
                 for object in doc
-                    .objects
+                    .objects()
                     .iter()
                     .filter(|object| doc.is_displayed(object.id))
                 {
@@ -615,7 +615,7 @@ impl Editor {
                         );
                     }
                 }
-                for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+                for o in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
                     if o.label.is_none()
                         && let Some(p) = doc.position(o.id)
                     {

@@ -13,10 +13,10 @@ fn parameter_locus_construction_accepts_both_selection_orders() {
         editor.doc.selected.extend(order);
         editor.construct_locus();
         assert!(matches!(
-            editor.doc.objects.last().unwrap().kind,
+            editor.doc.objects().last().unwrap().kind,
             Kind::ParameterLocus(_, 0., 1., 500)
         ));
-        assert_eq!(editor.doc.objects.len(), 11);
+        assert_eq!(editor.doc.objects().len(), 11);
         assert_eq!(editor.doc.selected.len(), 1);
         editor.doc.verify_roundtrip().unwrap();
     }
@@ -40,7 +40,10 @@ fn referenced_function_dialog_captures_sources_and_keeps_alias_order() {
     // Selection updates can omit older IDs from the recorded click order.
     editor.selection_order = vec![primitive, point];
     editor.begin_function_dialog(false, None);
-    assert_eq!(editor.function_draft_sources, vec![primitive, parameter]);
+    assert_eq!(
+        editor.dialogs.function_draft_sources,
+        vec![primitive, parameter]
+    );
     editor.doc.selected.clear();
     let expression = SimpleFunction::parse_with_sources("f1(x)+v2", 2).unwrap();
     let definition = editor
@@ -69,10 +72,13 @@ fn referenced_function_edit_preserves_sources_and_rejects_wrong_alias_roles() {
         .unwrap();
     let mut editor = Editor::new(doc);
     editor.begin_function_dialog(false, Some(definition));
-    assert_eq!(editor.function_draft_sources, [parameter, primitive]);
-    assert_eq!(editor.function_edit_id, Some(definition));
     assert_eq!(
-        SimpleFunction::parse_with_sources(&editor.function_draft, 2).unwrap(),
+        editor.dialogs.function_draft_sources,
+        [parameter, primitive]
+    );
+    assert_eq!(editor.dialogs.function_edit_id, Some(definition));
+    assert_eq!(
+        SimpleFunction::parse_with_sources(&editor.dialogs.function_draft, 2).unwrap(),
         SimpleFunction::parse_with_sources("v1*f2(x)", 2).unwrap()
     );
     let before = editor.doc.encode().unwrap();
@@ -108,7 +114,7 @@ fn referenced_function_plot_angle_choice_keeps_sources_and_undoes_together() {
     let plot = editor
         .apply_function_expression(expression, true, None, Some(false))
         .unwrap();
-    let definition = match editor.doc.objects[plot - 1].kind {
+    let definition = match editor.doc.objects()[plot - 1].kind {
         Kind::FunctionPlot(definition, ..) => definition,
         _ => panic!("Expected a function plot"),
     };
@@ -140,6 +146,6 @@ fn referenced_function_plot_angle_choice_keeps_sources_and_undoes_together() {
     // A subsequent independent creation does not inherit the previous references.
     editor.doc.selected.clear();
     editor.begin_function_dialog(false, None);
-    assert!(editor.function_draft_sources.is_empty());
-    assert_eq!(editor.function_draft, "x");
+    assert!(editor.dialogs.function_draft_sources.is_empty());
+    assert_eq!(editor.dialogs.function_draft, "x");
 }

@@ -21,6 +21,8 @@ mod inspector_description;
 mod mcp;
 mod measurements;
 mod menu;
+mod object_dialogs;
+use object_dialogs::ObjectDialogs;
 mod panels;
 mod picking;
 mod plot_dialogs;
@@ -356,73 +358,7 @@ struct Editor {
     rotate_dialog: bool,
     rotation_angle: f64,
     rotation_use_marked: bool,
-    function_dialog: Option<bool>,
-    function_edit_id: Option<usize>,
-    function_draft: String,
-    function_draft_sources: Vec<usize>,
-    function_angle_dialog: Option<(SimpleFunction, bool, Option<usize>)>,
-    derivative_angle_dialog: Option<usize>,
-    parametric_dialog: bool,
-    parametric_x: usize,
-    parametric_y: usize,
-    parametric_mode: PlotPointsMode,
-    parametric_min_draft: String,
-    parametric_max_draft: String,
-    plot_range_dialog: Option<usize>,
-    plot_min_draft: String,
-    plot_max_draft: String,
-    plot_samples_draft: String,
-    plot_presentation_draft: PlotPresentation,
-    parameter_value_dialog: Option<usize>,
-    parameter_value_draft: String,
-    parameter_precision_draft: usize,
-    parameter_display_mode_draft: u16,
-    parameter_original_display_mode: bool,
-    parameter_edit_box_draft: bool,
-    parameter_discrete_draft: bool,
-    parameter_rate_units_draft: String,
-    parameter_rate_seconds_draft: String,
-    parameter_min_draft: String,
-    parameter_max_draft: String,
-    parameter_keyboard_step_draft: String,
-    named_parameter_dialog: bool,
-    parameter_name_draft: String,
-    calculation_dialog: bool,
-    calculation_edit_id: Option<usize>,
-    calculation_draft: String,
-    properties_dialog: Option<usize>,
-    properties_draft_for: Option<usize>,
-    properties_label_draft: String,
-    properties_label_visible_draft: bool,
-    properties_opacity_draft: u16,
-    properties_iteration_depth_draft: u32,
-    properties_iteration_final_only_draft: bool,
-    properties_axis_pi_labels_draft: bool,
-    properties_sampled_image_samples_draft: u32,
-    properties_sampled_image_distortion_draft: SampledImageDistortion,
-    properties_plot_min_draft: String,
-    properties_plot_max_draft: String,
-    properties_plot_samples_draft: u32,
-    properties_plot_presentation_draft: PlotPresentation,
-    properties_visibility_action_draft: VisibilityAction,
-    properties_visibility_options_draft: VisibilityOptions,
-    properties_animation_settings_draft: Vec<AnimationSettings>,
-    properties_animation_target_draft: usize,
-    properties_movement_speed_draft: MovementSpeed,
-    properties_movement_follow_draft: bool,
-    properties_scroll_placement_draft: ScrollPlacement,
-    properties_presentation_mode_draft: PresentationMode,
-    properties_presentation_options_draft: PresentationOptions,
-    properties_link_draft: LinkButtonDraft,
-    iterate_dialog: bool,
-    iteration_depth_draft: String,
-    plot_axis_dialog: Option<Option<usize>>,
-    plot_axis_draft: String,
-    plot_points_dialog: Option<PlotPointsMode>,
-    plot_points_first_draft: String,
-    plot_points_second_draft: String,
-    plot_table_dialog: Option<usize>,
-    plot_table_mode: PlotPointsMode,
+    dialogs: ObjectDialogs,
     exit_requested: bool,
 }
 impl Editor {
@@ -436,14 +372,20 @@ impl Editor {
         } else {
             self.doc.undo();
         }
-        self.doc.selected.retain(|id| {
-            self.doc
-                .objects
-                .get(id.saturating_sub(1))
-                .is_some_and(|object| {
-                    *id > 0 && !object.deleted && object.page == self.doc.active_page
-                })
-        });
+        self.doc.selected = self
+            .doc
+            .selected
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.doc
+                    .objects()
+                    .get(id.saturating_sub(1))
+                    .is_some_and(|object| {
+                        *id > 0 && !object.deleted && object.page == self.doc.active_page
+                    })
+            })
+            .collect();
         self.reset_custom_tool_after_history();
         self.pending = None;
         self.inspected = None;
@@ -547,78 +489,7 @@ impl Editor {
             rotate_dialog: false,
             rotation_angle: 60.,
             rotation_use_marked: false,
-            function_dialog: None,
-            function_edit_id: None,
-            function_draft: "x".into(),
-            function_draft_sources: Vec::new(),
-            function_angle_dialog: None,
-            derivative_angle_dialog: None,
-            parametric_dialog: false,
-            parametric_x: 0,
-            parametric_y: 0,
-            parametric_mode: PlotPointsMode::Cartesian,
-            parametric_min_draft: "0".into(),
-            parametric_max_draft: "1".into(),
-            plot_range_dialog: None,
-            plot_min_draft: String::new(),
-            plot_max_draft: String::new(),
-            plot_samples_draft: String::new(),
-            plot_presentation_draft: PlotPresentation::default(),
-            parameter_value_dialog: None,
-            parameter_value_draft: "1".into(),
-            parameter_precision_draft: 2,
-            parameter_display_mode_draft: 3,
-            parameter_original_display_mode: false,
-            parameter_edit_box_draft: true,
-            parameter_discrete_draft: false,
-            parameter_rate_units_draft: "1".into(),
-            parameter_rate_seconds_draft: "1".into(),
-            parameter_min_draft: "-100".into(),
-            parameter_max_draft: "100".into(),
-            parameter_keyboard_step_draft: "0.01".into(),
-            named_parameter_dialog: false,
-            parameter_name_draft: "a".into(),
-            calculation_dialog: false,
-            calculation_edit_id: None,
-            calculation_draft: "2 + 3".into(),
-            properties_dialog: None,
-            properties_draft_for: None,
-            properties_label_draft: String::new(),
-            properties_label_visible_draft: false,
-            properties_opacity_draft: 32767,
-            properties_iteration_depth_draft: 1,
-            properties_iteration_final_only_draft: false,
-            properties_axis_pi_labels_draft: false,
-            properties_sampled_image_samples_draft: 2_000,
-            properties_sampled_image_distortion_draft: SampledImageDistortion::Most,
-            properties_plot_min_draft: String::new(),
-            properties_plot_max_draft: String::new(),
-            properties_plot_samples_draft: 750,
-            properties_plot_presentation_draft: PlotPresentation::default(),
-            properties_visibility_action_draft: VisibilityAction::Hide,
-            properties_visibility_options_draft: VisibilityOptions::default(),
-            properties_animation_settings_draft: Vec::new(),
-            properties_animation_target_draft: 0,
-            properties_movement_speed_draft: MovementSpeed::Medium,
-            properties_movement_follow_draft: true,
-            properties_scroll_placement_draft: ScrollPlacement::UpperLeft,
-            properties_presentation_mode_draft: PresentationMode::Simultaneous,
-            properties_presentation_options_draft: PresentationOptions::default(),
-            properties_link_draft: LinkButtonDraft {
-                use_page: false,
-                target_page: 0,
-                target_button_ordinal: None,
-                url: "https://".into(),
-            },
-            iterate_dialog: false,
-            iteration_depth_draft: "3".into(),
-            plot_axis_dialog: None,
-            plot_axis_draft: "1".into(),
-            plot_points_dialog: None,
-            plot_points_first_draft: "1".into(),
-            plot_points_second_draft: "1".into(),
-            plot_table_dialog: None,
-            plot_table_mode: PlotPointsMode::Cartesian,
+            dialogs: ObjectDialogs::default(),
             exit_requested: false,
         };
         e.sync_document_preferences();
@@ -630,12 +501,12 @@ impl Editor {
         let evaluated = self.evaluated_document();
         let doc = &*evaluated;
         let mut pts: Vec<_> = doc
-            .objects
+            .objects()
             .iter()
             .filter(|o| doc.is_displayed(o.id))
             .filter_map(|o| doc.position(o.id))
             .collect();
-        for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
+        for object in doc.objects().iter().filter(|o| doc.is_displayed(o.id)) {
             if let Some((text, rect)) = doc.text_content(object.id) {
                 // Combined captions save only their origin, not a bounding box.
                 let size = if matches!(object.kind, Kind::ReferencedText { .. }) {

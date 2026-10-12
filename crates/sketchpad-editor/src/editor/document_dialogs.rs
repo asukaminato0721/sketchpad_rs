@@ -124,7 +124,7 @@ impl Editor {
             let mut cancel = false;
             let affected_links = self
                 .doc
-                .objects
+                .objects()
                 .iter()
                 .filter(|object| {
                     object.page != page

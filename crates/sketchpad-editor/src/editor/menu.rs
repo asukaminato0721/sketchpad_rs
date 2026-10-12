@@ -111,7 +111,7 @@ impl Editor {
                             .iter()
                             .copied()
                             .filter(|id| {
-                                self.doc.objects.get(id - 1).is_some_and(|object| {
+                                self.doc.objects().get(id - 1).is_some_and(|object| {
                                 object.page == self.doc.active_page
                                     && object.visible
                                     && !object.deleted
@@ -148,7 +148,7 @@ impl Editor {
                             .iter()
                             .copied()
                             .filter(|&id| {
-                                self.doc.objects.get(id - 1).is_some_and(|object| {
+                                self.doc.objects().get(id - 1).is_some_and(|object| {
                                     object.page == self.doc.active_page
                                         && object.visible
                                         && !object.deleted
@@ -209,7 +209,7 @@ impl Editor {
                             ui.close();
                         }
                         let presentation_targets = self.selection_order.iter().copied()
-                            .filter(|id| self.doc.objects.get(id - 1).is_some_and(|object| {
+                            .filter(|id| self.doc.objects().get(id - 1).is_some_and(|object| {
                                 object.visible && !object.deleted && object.page == self.doc.active_page
                                     && object.kind.is_action_button()
                             }))
@@ -230,7 +230,7 @@ impl Editor {
                         if ui.add_enabled(
                             (!self.doc.partial_view && self.doc.page_count == 1)
                                 || (self.doc.page_count > 1
-                                    && !self.doc.objects.iter().any(|object| matches!(object.kind, Kind::Unsupported(_)))),
+                                    && !self.doc.objects().iter().any(|object| matches!(object.kind, Kind::Unsupported(_)))),
                             egui::Button::new(tr("Link…"))).clicked()
                         {
                             self.link_dialog = Some(LinkButtonDraft {
@@ -257,7 +257,7 @@ impl Editor {
                     });
                     let crop_pair = if self.selection_order.len() == 2 {
                         let picture = self.selection_order.iter().copied().find(|id| {
-                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                            self.doc.objects().get(id - 1).is_some_and(|object| {
                                 matches!(
                                     object.kind,
                                     Kind::Image {
@@ -269,7 +269,7 @@ impl Editor {
                         });
                         let polygon = self.selection_order.iter().copied().find(|id| {
                             self.doc
-                                .objects
+                                .objects()
                                 .get(id - 1)
                                 .is_some_and(|object| object.kind.is_polygon())
                         });
@@ -343,7 +343,7 @@ impl Editor {
                     }
                     let edit_definition = if self.doc.selected.len() == 1 {
                         let id = *self.doc.selected.iter().next().unwrap();
-                        self.doc.objects.get(id - 1).and_then(|object| {
+                        self.doc.objects().get(id - 1).and_then(|object| {
                             (object.page == self.doc.active_page && !object.deleted)
                                 .then_some(&object.kind)
                         }).and_then(|kind| match kind {
@@ -375,7 +375,7 @@ impl Editor {
                     let properties_id = (self.doc.selected.len() == 1)
                         .then(|| *self.doc.selected.iter().next().unwrap())
                         .filter(|id| {
-                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                            self.doc.objects().get(id - 1).is_some_and(|object| {
                                 object.page == self.doc.active_page && !object.deleted
                             })
                         });
@@ -383,8 +383,8 @@ impl Editor {
                         .add_enabled(properties_id.is_some(), egui::Button::new(tr("Properties…")))
                         .clicked()
                     {
-                        self.properties_dialog = properties_id;
-                        self.properties_draft_for = None;
+                        self.dialogs.properties_dialog = properties_id;
+                        self.dialogs.properties_draft_for = None;
                         ui.close();
                     }
                     if ui.button(tr("Preferences…")).clicked() {
@@ -393,14 +393,14 @@ impl Editor {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(!self.doc.undo.is_empty(), egui::Button::new(tr("Undo")))
+                        .add_enabled(self.doc.undo_len() > 0, egui::Button::new(tr("Undo")))
                         .clicked()
                     {
                         self.apply_history(false);
                         ui.close();
                     }
                     if ui
-                        .add_enabled(!self.doc.redo.is_empty(), egui::Button::new(tr("Redo")))
+                        .add_enabled(self.doc.redo_len() > 0, egui::Button::new(tr("Redo")))
                         .clicked()
                     {
                         self.apply_history(true);
@@ -425,7 +425,7 @@ impl Editor {
                     if ui.button(tr("Select All")).clicked() {
                         self.doc.selected = self
                             .doc
-                            .objects
+                            .objects()
                             .iter()
                             .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
                             .map(|o| o.id)
@@ -611,12 +611,12 @@ impl Editor {
                         .copied()
                         .filter(|&id| {
                             self.doc.can_edit_geometry_label(id)
-                                && self.doc.objects[id - 1].label.is_some()
+                                && self.doc.objects()[id - 1].label.is_some()
                         })
                         .collect::<Vec<_>>();
                     let labels_visible = !selected_labels.is_empty()
                         && selected_labels.iter().all(|&id| {
-                            self.doc.objects[id - 1]
+                            self.doc.objects()[id - 1]
                                 .label
                                 .as_ref()
                                 .is_some_and(|label| label.visible())
@@ -646,7 +646,7 @@ impl Editor {
                             .doc
                             .selected
                             .iter()
-                            .all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.tracing));
+                            .all(|&id| self.doc.objects().get(id - 1).is_some_and(|o| o.tracing));
                     if ui
                         .button(tr(if tracing {
                             "Stop Tracing"
@@ -839,7 +839,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button(tr("Iterate…")).clicked() {
-                        self.iterate_dialog = true;
+                        self.dialogs.iterate_dialog = true;
                         ui.close();
                     }
                     ui.separator();
@@ -974,7 +974,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button(tr("New Parameter (1.00)")).clicked() {
-                        let anchor = if self.doc.objects.len() == 1 {
+                        let anchor = if self.doc.objects().len() == 1 {
                             (10, 38)
                         } else {
                             (10, 5)
@@ -986,15 +986,15 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button(tr("New Named Parameter…")).clicked() {
-                        self.parameter_name_draft = "a".into();
-                        self.parameter_value_draft = "1".into();
-                        self.named_parameter_dialog = true;
+                        self.dialogs.parameter_name_draft = "a".into();
+                        self.dialogs.parameter_value_draft = "1".into();
+                        self.dialogs.named_parameter_dialog = true;
                         ui.close();
                     }
                     if ui.button(tr("Edit Selected Parameter…")).clicked() {
                         let selected = self.doc.selected.iter().copied().find(|&id| {
                             self.doc
-                                .objects
+                                .objects()
                                 .get(id - 1)
                                 .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
                         });
@@ -1008,16 +1008,16 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button(tr("Calculate…")).clicked() {
-                        self.calculation_edit_id = None;
-                        self.calculation_draft = if self.doc.selected.len() >= 2 {
+                        self.dialogs.calculation_edit_id = None;
+                        self.dialogs.calculation_draft = if self.doc.selected.len() >= 2 {
                             let ids = self.selection_order.iter().copied().filter(|id| self.doc.selected.contains(id)).collect::<Vec<_>>();
-                            let argument = ids.iter().position(|id| self.doc.objects[*id - 1].kind.numeric_unit().is_some())
+                            let argument = ids.iter().position(|id| self.doc.objects()[*id - 1].kind.numeric_unit().is_some())
                                 .map(|index| format!("v{}", index+1)).unwrap_or_else(|| "2".into());
-                            let calls = ids.iter().enumerate().filter(|(_, id)| matches!(self.doc.objects[**id - 1].kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
+                            let calls = ids.iter().enumerate().filter(|(_, id)| matches!(self.doc.objects()[**id - 1].kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                                 .map(|(index, _)| format!("f{}({argument})", index+1)).collect::<Vec<_>>();
                             if calls.is_empty() { "a + b".into() } else { calls.join(" + ") }
                         } else if self.doc.selected.len() == 1 {
-                            match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
+                            match self.doc.selected.iter().next().and_then(|&id| self.doc.objects().get(id - 1)).map(|object| &object.kind) {
                                 Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)) => "f1(2)".into(),
                                 Some(Kind::Parameter(group)) => {
                                     let source = *self.doc.selected.iter().next().unwrap();
@@ -1034,14 +1034,14 @@ impl Editor {
                                 _ => "2 + 3".into(),
                             }
                         } else { "2 + 3".into() };
-                        self.calculation_dialog = true;
+                        self.dialogs.calculation_dialog = true;
                         ui.close();
                     }
                     if ui.button(tr("Tabulate Selected Parameter")).clicked() {
                         let pair_selected = self.doc.selected.len() == 2
                             && ["t[1]", "t[2]"].iter().all(|name| {
                                 self.doc.selected.iter().any(|id| {
-                                    self.doc.objects.get(id - 1).is_some_and(|object| {
+                                    self.doc.objects().get(id - 1).is_some_and(|object| {
                                         matches!(&object.kind, Kind::Parameter(group) if group.name() == *name)
                                     })
                                 })
@@ -1053,7 +1053,7 @@ impl Editor {
                                 let source = self.doc.selected.iter().next().copied().unwrap_or(0);
                                 let anchor = source
                                     .checked_sub(1)
-                                    .and_then(|index| self.doc.objects.get(index))
+                                    .and_then(|index| self.doc.objects().get(index))
                                     .and_then(|object| match &object.kind {
                                         Kind::Parameter(group) if group.name() != "t[1]" => {
                                             let bottom = group.bbox().1.1;
@@ -1090,7 +1090,7 @@ impl Editor {
                     }
                     let selected_function = if self.doc.selected.len() == 1 {
                         self.doc.selected.iter().copied().next().filter(|&id| {
-                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                            self.doc.objects().get(id - 1).is_some_and(|object| {
                                 !object.deleted
                                     && matches!(
                                         object.kind,
@@ -1111,7 +1111,7 @@ impl Editor {
                         .clicked()
                     {
                         let source = selected_function.unwrap();
-                        let uses_trigonometry = match &self.doc.objects[source - 1].kind {
+                        let uses_trigonometry = match &self.doc.objects()[source - 1].kind {
                             Kind::FunctionDefinition(expression)
                             | Kind::ReferencedFunction(_, expression)
                             | Kind::DerivativeFunction(_, expression) => {
@@ -1120,7 +1120,7 @@ impl Editor {
                             _ => false,
                         };
                         if uses_trigonometry && !self.doc.angle_unit_radians {
-                            self.derivative_angle_dialog = Some(source);
+                            self.dialogs.derivative_angle_dialog = Some(source);
                         } else {
                             match self.doc.add_derivative_function(source) {
                                 Ok(id) => {
@@ -1134,7 +1134,7 @@ impl Editor {
                     }
                     let selected_picture = match self.selection_order.as_slice() {
                         [id]
-                            if self.doc.objects.get(id - 1).is_some_and(|object| {
+                            if self.doc.objects().get(id - 1).is_some_and(|object| {
                                 !object.deleted
                                     && object.page == self.doc.active_page
                                     && matches!(
@@ -1186,9 +1186,9 @@ impl Editor {
                                 Err(error) => error,
                             },
                             None => {
-                                self.plot_axis_dialog = Some(path);
-                                self.plot_axis_draft =
-                                    match path.map(|id| &self.doc.objects[id - 1].kind) {
+                                self.dialogs.plot_axis_dialog = Some(path);
+                                self.dialogs.plot_axis_draft =
+                                    match path.map(|id| &self.doc.objects()[id - 1].kind) {
                                         Some(Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..)) => "0.5",
                                         Some(kind) if super::is_circle_construction_host(kind) => "0.25",
                                         _ => "1",
@@ -1200,25 +1200,25 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button(tr("Plot Points as (x, y)")).clicked() {
-                        self.plot_points_dialog = Some(PlotPointsMode::Cartesian);
-                        self.plot_points_first_draft = "1".into();
-                        self.plot_points_second_draft = "1".into();
+                        self.dialogs.plot_points_dialog = Some(PlotPointsMode::Cartesian);
+                        self.dialogs.plot_points_first_draft = "1".into();
+                        self.dialogs.plot_points_second_draft = "1".into();
                         ui.close();
                     }
                     if ui.button(tr("Plot Points as (r, θ)")).clicked() {
-                        self.plot_points_dialog = Some(PlotPointsMode::Polar);
-                        self.plot_points_first_draft = "1".into();
-                        self.plot_points_second_draft = "1".into();
+                        self.dialogs.plot_points_dialog = Some(PlotPointsMode::Polar);
+                        self.dialogs.plot_points_first_draft = "1".into();
+                        self.dialogs.plot_points_second_draft = "1".into();
                         ui.close();
                     }
                     if ui.button(tr("Plot Table Data")).clicked() {
                         let table = self.doc.selected.iter().next().copied().unwrap_or(0);
-                        self.plot_table_dialog = Some(table);
-                        self.plot_table_mode = PlotPointsMode::Cartesian;
+                        self.dialogs.plot_table_dialog = Some(table);
+                        self.dialogs.plot_table_mode = PlotPointsMode::Cartesian;
                         ui.close();
                     }
                     let selected_function = self.doc.selected.iter().copied().find(|&id| {
-                        self.doc.objects.get(id - 1).is_some_and(|o| {
+                        self.doc.objects().get(id - 1).is_some_and(|o| {
                             !o.deleted
                                 && matches!(
                                     o.kind,
@@ -1250,7 +1250,7 @@ impl Editor {
                     if ui.button(tr("Plot Parametric Curve…")).clicked() {
                         let functions = self
                             .doc
-                            .objects
+                            .objects()
                             .iter()
                             .filter(|object| {
                                 object.page == self.doc.active_page
@@ -1276,12 +1276,12 @@ impl Editor {
                                     chosen.push(id);
                                 }
                             }
-                            self.parametric_x = chosen[0];
-                            self.parametric_y = chosen[1];
-                            self.parametric_mode = PlotPointsMode::Cartesian;
-                            self.parametric_min_draft = "0".into();
-                            self.parametric_max_draft = "1".into();
-                            self.parametric_dialog = true;
+                            self.dialogs.parametric_x = chosen[0];
+                            self.dialogs.parametric_y = chosen[1];
+                            self.dialogs.parametric_mode = PlotPointsMode::Cartesian;
+                            self.dialogs.parametric_min_draft = "0".into();
+                            self.dialogs.parametric_max_draft = "1".into();
+                            self.dialogs.parametric_dialog = true;
                         }
                         ui.close();
                     }
@@ -1437,11 +1437,11 @@ mod tests {
             text_center(&output, "Preferences…");
             click(&mut editor, &ctx, merge);
             if count == 2 {
-                assert!(editor.doc.objects[0].deleted);
+                assert!(editor.doc.objects()[0].deleted);
                 assert_eq!(editor.selection_order, vec![2]);
             } else {
                 assert_eq!(editor.doc.selected.len(), count);
-                assert!(editor.doc.objects.iter().all(|object| !object.deleted));
+                assert!(editor.doc.objects().iter().all(|object| !object.deleted));
             }
         }
     }

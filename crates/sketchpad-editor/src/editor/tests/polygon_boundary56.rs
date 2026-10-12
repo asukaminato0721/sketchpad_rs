@@ -28,7 +28,7 @@ fn polygon_boundary_command_preserves_source_identity_both_selection_orders_and_
             e.doc.selected = order.into_iter().collect();
             e.intersection();
             assert_eq!(e.selection_order, vec![9]);
-            assert_eq!(e.doc.objects[8].kind, Kind::BoundaryIntersection(8, 7));
+            assert_eq!(e.doc.objects()[8].kind, Kind::BoundaryIntersection(8, 7));
             assert_eq!(e.doc.position(9), Some(Point { x: 250., y: 200. }));
             e.doc.verify_roundtrip().unwrap();
             e.doc.checkpoint();

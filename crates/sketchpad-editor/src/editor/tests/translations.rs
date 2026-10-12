@@ -43,16 +43,16 @@ fn marked_center_and_mirror_drive_transforms_without_changing_source_records() {
     editor.select_only(source);
     editor.rotation_angle = 90.;
     editor.rotate_selected();
-    assert!(editor.doc.objects.last().unwrap().kind == Kind::RotatedPoint(source, center, 90.));
+    assert!(editor.doc.objects().last().unwrap().kind == Kind::RotatedPoint(source, center, 90.));
 
     editor.select_only(source);
     editor.dilation_factor = 2.;
     editor.dilate_selected();
-    assert!(editor.doc.objects.last().unwrap().kind == Kind::ScaledPoint(source, center, 2.));
+    assert!(editor.doc.objects().last().unwrap().kind == Kind::ScaledPoint(source, center, 2.));
 
     editor.select_only(source);
     editor.reflect_selected();
-    assert!(editor.doc.objects.last().unwrap().kind == Kind::ReflectedPoint(source, mirror));
+    assert!(editor.doc.objects().last().unwrap().kind == Kind::ReflectedPoint(source, mirror));
     assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
 }
 
@@ -74,9 +74,9 @@ fn marked_vector_drives_dynamic_translation() {
 
     editor.select_only(source);
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::VectorTranslatedPoint(source, start, end)
     );
     assert_eq!(editor.doc.position(image), Some(Point { x: 170., y: 210. }));
@@ -102,9 +102,9 @@ fn marked_distance_drives_dynamic_polar_translation() {
 
     editor.select_only(source);
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::MarkedDistanceTranslatedPoint(source, distance, 90.)
     );
     assert_eq!(editor.doc.position(image), Some(Point { x: 100., y: 120. }));
@@ -130,14 +130,14 @@ fn marked_distance_translates_selected_segment_and_circle() {
     editor.select_only(segment);
     editor.translate_selected();
     assert_eq!(
-        editor.doc.objects.last().unwrap().kind,
+        editor.doc.objects().last().unwrap().kind,
         Kind::MarkedDistanceTranslatedSegment(segment, distance, 90.)
     );
     editor.select_only(circle);
     editor.translate_selected();
-    let translated_circle = editor.doc.objects.len();
+    let translated_circle = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects.last().unwrap().kind,
+        editor.doc.objects().last().unwrap().kind,
         Kind::MarkedDistanceTranslatedCircle(circle, distance, 90.)
     );
     assert!(
@@ -175,9 +175,9 @@ fn two_marked_distances_drive_rectangular_translation() {
 
     editor.select_only(source);
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
     );
     assert_eq!(editor.doc.position(image), Some(Point { x: 200., y: 160. }));
@@ -192,9 +192,9 @@ fn fixed_rectangular_translation_uses_signed_offsets() {
     editor.translation_horizontal = 2.;
     editor.translation_vertical = -0.5;
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::FixedRectangularTranslatedPoint(
             source,
             37.79527559055118,
@@ -225,18 +225,18 @@ fn mixed_rectangular_translation_uses_the_other_marked_axis() {
     editor.select_only(source);
     editor.translation_mode = TranslationMode::RectangularHorizontalFixed;
     editor.translate_selected();
-    let fixed_x = editor.doc.objects.len();
+    let fixed_x = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[fixed_x - 1].kind,
+        editor.doc.objects()[fixed_x - 1].kind,
         Kind::MixedRectangularTranslatedPoint(source, vertical, 2., true)
     );
 
     editor.select_only(source);
     editor.translation_mode = TranslationMode::RectangularVerticalFixed;
     editor.translate_selected();
-    let fixed_y = editor.doc.objects.len();
+    let fixed_y = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[fixed_y - 1].kind,
+        editor.doc.objects()[fixed_y - 1].kind,
         Kind::MixedRectangularTranslatedPoint(source, horizontal, -0.5, false)
     );
     assert!(editor.doc.move_point(h_end, Point { x: 300., y: 120. }));
@@ -253,8 +253,8 @@ fn mixed_rectangular_translation_uses_the_other_marked_axis() {
     editor.select_only(region);
     editor.translation_mode = TranslationMode::RectangularVerticalFixed;
     editor.translate_selected();
-    let image = editor.doc.objects.len();
-    let definition = editor.doc.objects[image - 1]
+    let image = editor.doc.objects().len();
+    let definition = editor.doc.objects()[image - 1]
         .kind
         .transform_definition()
         .unwrap();
@@ -281,9 +281,9 @@ fn fixed_polar_translation_accepts_a_segment() {
     editor.translation_angle = 90.;
     editor.translation_distance = 1.;
     editor.translate_selected();
-    let translated = editor.doc.objects.len();
+    let translated = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[translated - 1].kind,
+        editor.doc.objects()[translated - 1].kind,
         Kind::PolarTranslatedSegment(segment, 90., 37.79527559055118, 1.)
     );
     let (a, b, mode) = editor.doc.line_points(translated).unwrap();
@@ -303,9 +303,9 @@ fn fixed_polar_circle_and_rectangular_segment_translation() {
     editor.select_only(circle);
     editor.translation_mode = TranslationMode::FixedPolar;
     editor.translate_selected();
-    let translated_circle = editor.doc.objects.len();
+    let translated_circle = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[translated_circle - 1].kind,
+        editor.doc.objects()[translated_circle - 1].kind,
         Kind::PolarTranslatedCircle(circle, 90., 37.79527559055118, 1.)
     );
     let (translated_center, radius) = editor.doc.circle_points(translated_circle).unwrap();
@@ -317,9 +317,9 @@ fn fixed_polar_circle_and_rectangular_segment_translation() {
     editor.translation_horizontal = 2.;
     editor.translation_vertical = -0.5;
     editor.translate_selected();
-    let translated_segment = editor.doc.objects.len();
+    let translated_segment = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[translated_segment - 1].kind,
+        editor.doc.objects()[translated_segment - 1].kind,
         Kind::FixedRectangularTranslatedSegment(
             segment,
             37.79527559055118,
@@ -347,23 +347,23 @@ fn rectangular_circle_and_vector_shape_translation() {
     editor.translation_mode = TranslationMode::MarkedVector;
     editor.translate_selected();
     assert_eq!(
-        editor.doc.objects.last().unwrap().kind,
+        editor.doc.objects().last().unwrap().kind,
         Kind::VectorTranslatedSegment(segment, start, end)
     );
 
     editor.select_only(circle);
     editor.translate_selected();
     assert_eq!(
-        editor.doc.objects.last().unwrap().kind,
+        editor.doc.objects().last().unwrap().kind,
         Kind::VectorTranslatedCircle(circle, start, end)
     );
 
     editor.select_only(circle);
     editor.translation_mode = TranslationMode::FixedRectangular;
     editor.translate_selected();
-    let translated = editor.doc.objects.len();
+    let translated = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects.last().unwrap().kind,
+        editor.doc.objects().last().unwrap().kind,
         Kind::FixedRectangularTranslatedCircle(
             circle,
             37.79527559055118,
@@ -392,9 +392,9 @@ fn marked_and_mixed_rectangular_translation_accepts_segments_and_circles() {
         editor.translation_mode = mode;
         for source in [segment, circle] {
             editor.select_only(source);
-            let before = editor.doc.objects.len();
+            let before = editor.doc.objects().len();
             editor.translate_selected();
-            let id = editor.doc.objects.len();
+            let id = editor.doc.objects().len();
             assert_eq!(id, before + 1, "{}", editor.status);
             assert!(editor.doc.line_points(id).is_some() || editor.doc.circle_points(id).is_some());
         }
@@ -426,9 +426,9 @@ fn typed_length_parameter_can_be_marked_and_drives_editor_translation() {
     assert_eq!(editor.doc.encode().unwrap(), before);
     editor.select_only(source);
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::MarkedDistanceTranslatedPoint(source, 2, 90.)
     );
     assert!(
@@ -467,9 +467,9 @@ fn scalar_parameter_can_be_marked_as_centimeters_and_translated_with_sign() {
     editor.translation_angle = 0.;
     editor.select_only(source);
     editor.translate_selected();
-    let image = editor.doc.objects.len();
+    let image = editor.doc.objects().len();
     assert_eq!(
-        editor.doc.objects[image - 1].kind,
+        editor.doc.objects()[image - 1].kind,
         Kind::MarkedDistanceTranslatedPoint(source, distance, 0.)
     );
     assert!(

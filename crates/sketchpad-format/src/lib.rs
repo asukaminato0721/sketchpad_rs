@@ -6,6 +6,8 @@ pub struct Record {
     pub kind: u32,
     pub start: usize,
     pub data: std::ops::Range<usize>,
+    /// End of the record, including its optional alignment byte.
+    pub end: usize,
 }
 pub type PageTitleSlot = (Option<usize>, usize, Option<String>);
 pub fn u32_at(b: &[u8], i: usize) -> u32 {
@@ -18,10 +20,19 @@ pub fn records(b: &[u8]) -> Result<Vec<Record>, String> {
     if b.len() < 12 || &b[..4] != b"GSP4" {
         return Err("Expected a GSP4 document".into());
     }
+    records_from(b, 4)
+}
+
+/// Read records from a document or a headerless object group. Offsets remain
+/// relative to `b`. An empty group is valid. Payload ranges exclude alignment.
+pub fn records_from(b: &[u8], start: usize) -> Result<Vec<Record>, String> {
+    if start > b.len() {
+        return Err("Record start is outside the input".into());
+    }
     let mut out = Vec::new();
-    let mut i = 4;
+    let mut i = start;
     while i < b.len() {
-        if i + 8 > b.len() {
+        if b.len() - i < 8 {
             return Err(format!("Truncated record at {i:#x}"));
         }
         let n = u32_at(b, i) as usize;
@@ -29,15 +40,17 @@ pub fn records(b: &[u8]) -> Result<Vec<Record>, String> {
         if end > b.len() {
             return Err(format!("Truncated payload at {i:#x}"));
         }
+        let aligned_end = end.checked_add(n % 2).ok_or("Record length overflow")?;
+        if aligned_end > b.len() {
+            return Err("Missing record padding".into());
+        }
         out.push(Record {
             kind: u32_at(b, i + 4),
             start: i,
             data: i + 8..end,
+            end: aligned_end,
         });
-        i = end + n % 2;
-    }
-    if i != b.len() {
-        return Err("Missing record padding".into());
+        i = aligned_end;
     }
     Ok(out)
 }
@@ -73,6 +86,26 @@ pub fn put_record(out: &mut Vec<u8>, kind: u32, data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn headerless_groups_use_document_framing_and_preserve_padding() {
+        let mut bytes = Vec::new();
+        put_record(&mut bytes, 0x1234, &[1, 2, 3]);
+        *bytes.last_mut().unwrap() = 0xa5;
+        put_record(&mut bytes, 0x5678, &[4, 5]);
+        let parsed = records_from(&bytes, 0).unwrap();
+        assert_eq!(parsed[0].data, 8..11);
+        assert_eq!(parsed[0].end, 12);
+        assert_eq!(bytes[parsed[0].end - 1], 0xa5);
+        assert_eq!(parsed[1].start, 12);
+        assert_eq!(parsed[1].end, bytes.len());
+        assert_eq!(records_from(&bytes, 12).unwrap()[0].data, 20..22);
+        assert!(records_from(&[], 0).unwrap().is_empty());
+        assert!(records_from(&bytes, bytes.len() + 1).is_err());
+        assert!(records_from(&bytes[..11], 0).is_err());
+        assert!(records_from(&bytes[..10], 0).is_err());
+        assert!(records_from(&bytes[..7], 0).is_err());
+    }
 
     fn document() -> Vec<u8> {
         let mut bytes = b"GSP4".to_vec();

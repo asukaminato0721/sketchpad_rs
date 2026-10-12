@@ -21,7 +21,7 @@ pub(crate) struct TableLayout {
 
 pub(crate) fn is_table(doc: &Document, id: usize) -> bool {
     id.checked_sub(1)
-        .and_then(|index| doc.objects.get(index))
+        .and_then(|index| doc.objects().get(index))
         .is_some_and(|object| {
             matches!(
                 object.kind,
@@ -36,7 +36,7 @@ pub(crate) fn is_table(doc: &Document, id: usize) -> bool {
 type TableRows = Vec<Vec<String>>;
 
 fn table_cells(doc: &Document, id: usize) -> Option<((i16, i16), TableRows)> {
-    let object = doc.objects.get(id.checked_sub(1)?)?;
+    let object = doc.objects().get(id.checked_sub(1)?)?;
     match &object.kind {
         Kind::DataTable(_, group) => Some((group.anchor(), doc.data_table_cells(id)?)),
         Kind::ValueTable(..) => {
@@ -209,7 +209,7 @@ mod tests {
         )
         .unwrap();
         let id = doc
-            .objects
+            .objects()
             .iter()
             .find(|object| is_table(&doc, object.id))
             .unwrap()

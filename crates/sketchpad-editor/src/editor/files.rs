@@ -327,6 +327,45 @@ impl Editor {
         self.preferences_draft = preferences;
         self.sync_document_preferences();
     }
+    /// Discard state tied to the object numbers from the previous document table.
+    fn reset_object_references(&mut self) {
+        self.selection_order.clear();
+        self.image_textures.clear();
+        self.pending = None;
+        self.dragging = None;
+        self.inspected = None;
+        self.text_selected_range = None;
+        self.marked_center = None;
+        self.marked_mirror = None;
+        self.marked_vector = None;
+        self.marked_distance = None;
+        self.marked_rectangular_distances = None;
+        self.marked_angle = None;
+        self.marked_ratio = None;
+        self.marked_ratio_value = None;
+        self.trace_marks.clear();
+        self.clear_animation_tracks();
+        self.movements.clear();
+        self.presentations.clear();
+        self.stop_all_sounds();
+        self.animation_button_dialog = None;
+        self.movement_button_dialog = None;
+        self.scroll_button_dialog = None;
+        self.presentation_button_dialog = None;
+        self.link_dialog = None;
+        self.dialogs = super::ObjectDialogs::default();
+        self.inspector = Default::default();
+        self.evaluation_cache = Default::default();
+        self.custom_tool_inputs.clear();
+        self.custom_tool_path_start = None;
+        self.create_tool_dialog = false;
+        self.tool = super::Tool::Select;
+        self.translate_dialog = false;
+        self.rotate_dialog = false;
+        self.dilate_dialog = false;
+        self.text_font_dialog = false;
+    }
+
     pub(super) fn save(&mut self, as_new: bool) -> bool {
         let path = if as_new || self.doc.path.is_none() {
             rfd::FileDialog::new()
@@ -337,35 +376,11 @@ impl Editor {
             self.doc.path.clone()
         };
         let Some(path) = path else { return false };
-        let inserted_multi_page_additions = self.doc.has_pending_multi_page_additions();
-        let object_ids_will_change =
-            inserted_multi_page_additions || self.doc.objects.iter().any(|object| object.deleted);
         match self.doc.save_to(&path) {
-            Ok(()) => {
-                if inserted_multi_page_additions {
-                    self.selection_order.clear();
-                    self.image_textures.clear();
-                    self.pending = None;
-                    self.dragging = None;
-                    self.inspected = None;
-                    self.text_selected_range = None;
-                    self.marked_center = None;
-                    self.marked_mirror = None;
-                    self.marked_vector = None;
-                    self.marked_distance = None;
-                    self.marked_rectangular_distances = None;
-                    self.marked_angle = None;
-                    self.marked_ratio = None;
-                    self.marked_ratio_value = None;
-                    self.trace_marks.clear();
-                    self.clear_animation_tracks();
-                    self.movements.clear();
-                    self.presentations.clear();
-                    self.stop_all_sounds();
-                    self.animation_button_dialog = None;
-                    self.movement_button_dialog = None;
-                    self.scroll_button_dialog = None;
-                    self.presentation_button_dialog = None;
+            Ok(outcome) => {
+                let object_ids_will_change = outcome.object_ids_changed;
+                if object_ids_will_change {
+                    self.reset_object_references();
                 }
                 let reloaded_custom_transforms = object_ids_will_change
                     && (!self.custom_transforms.is_empty()

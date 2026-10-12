@@ -14,10 +14,10 @@ fn live_edits_update_dependents_and_share_history() {
     let mut editor = editor();
     let original = editor.doc.position(1).unwrap();
     let b = editor.doc.position(2).unwrap();
-    let history = editor.doc.undo.len();
+    let history = editor.doc.undo_len();
     let result = call(&mut editor, "move_point", json!({"id":1,"x":110,"y":120})).unwrap();
     assert_eq!(result["position"], json!({"x":110.0,"y":120.0}));
-    assert_eq!(editor.doc.undo.len(), history + 1);
+    assert_eq!(editor.doc.undo_len(), history + 1);
     let midpoint = call(&mut editor, "inspect_object", json!({"id":5})).unwrap();
     assert_eq!(midpoint["parents"], json!([1, 2, 3]));
     assert_eq!(
@@ -43,7 +43,7 @@ fn rejected_moves_preserve_document_dirty_flag_and_redo() {
     call(&mut editor, "undo", json!({})).unwrap();
     editor.doc.dirty = false;
     let before = editor.doc.encode().unwrap();
-    let history = (editor.doc.undo.len(), editor.doc.redo.len());
+    let history = (editor.doc.undo_len(), editor.doc.redo_len());
     for id in [0, 3, 5, 999] {
         assert!(call(&mut editor, "move_point", json!({"id":id,"x":120,"y":130})).is_err());
     }
@@ -57,7 +57,7 @@ fn rejected_moves_preserve_document_dirty_flag_and_redo() {
             .doc
             .move_point_with_history(1, Point { x: f64::NAN, y: 2. })
     );
-    assert_eq!((editor.doc.undo.len(), editor.doc.redo.len()), history);
+    assert_eq!((editor.doc.undo_len(), editor.doc.redo_len()), history);
     assert!(!editor.doc.dirty);
     assert_eq!(editor.doc.encode().unwrap(), before);
 }
@@ -107,10 +107,13 @@ fn parameter_edits_share_history_and_svg_uses_live_viewport() {
 #[test]
 fn edits_reject_inactive_deleted_objects_and_active_drag() {
     let mut editor = editor();
-    editor.doc.objects.edit(0).page = 1;
+    editor.doc.edit_object(1, |object| object.page = 1).unwrap();
     assert!(call(&mut editor, "move_point", json!({"id":1,"x":1,"y":2})).is_err());
-    editor.doc.objects.edit(0).page = 0;
-    editor.doc.objects.edit(0).deleted = true;
+    editor.doc.edit_object(1, |object| object.page = 0).unwrap();
+    editor
+        .doc
+        .edit_object(1, |object| object.deleted = true)
+        .unwrap();
     assert!(call(&mut editor, "inspect_object", json!({"id":1})).is_err());
     editor.dragging = Some(2);
     assert!(call(&mut editor, "undo", json!({})).is_err());
@@ -125,9 +128,9 @@ fn failed_constraint_projection_does_not_create_a_checkpoint() {
     let segment = document.add(Kind::Segment(a, b));
     let point = document.add(Kind::PointOnSegment(segment, 0.5));
     let mut editor = Editor::new(document);
-    let history = editor.doc.undo.len();
+    let history = editor.doc.undo_len();
     assert!(call(&mut editor, "move_point", json!({"id":point,"x":2,"y":2})).is_err());
-    assert_eq!(editor.doc.undo.len(), history);
+    assert_eq!(editor.doc.undo_len(), history);
 }
 
 #[test]
@@ -140,7 +143,7 @@ fn construction_groups_helpers_and_labels_into_one_undo_step() {
     )
     .unwrap();
     assert_eq!(point["created_ids"], json!([1]));
-    assert_eq!(editor.doc.undo.len(), 1);
+    assert_eq!(editor.doc.undo_len(), 1);
     call(&mut editor, "create_point", json!({"x":100,"y":70})).unwrap();
     let before = editor.doc.encode().unwrap();
     let midpoint = call(
@@ -151,11 +154,11 @@ fn construction_groups_helpers_and_labels_into_one_undo_step() {
     .unwrap();
     assert_eq!(midpoint["created_ids"], json!([3, 4]));
     assert_eq!(midpoint["selected_ids"], json!([4]));
-    assert_eq!(editor.doc.undo.len(), 3);
+    assert_eq!(editor.doc.undo_len(), 3);
     assert_eq!(editor.doc.position(4), Some(Point { x: 60., y: 50. }));
     let saved = editor.doc.encode().unwrap();
     let reopened = Document::from_bytes(&saved, None).unwrap();
-    assert_eq!(reopened.objects.len(), 4);
+    assert_eq!(reopened.objects().len(), 4);
     assert_eq!(reopened.position(4), editor.doc.position(4));
     editor.pending = Some(4);
     editor.inspected = Some(4);
@@ -176,7 +179,7 @@ fn failed_construction_preserves_selection_history_and_document() {
     let mut editor = editor();
     call(&mut editor, "select_objects", json!({"ids":[2,1]})).unwrap();
     let before = editor.doc.encode().unwrap();
-    let history = (editor.doc.undo.len(), editor.doc.redo.len());
+    let history = (editor.doc.undo_len(), editor.doc.redo_len());
     for arguments in [
         json!({"kind":"segment","inputs":[1]}),
         json!({"kind":"segment","inputs":[1,1]}),
@@ -193,7 +196,7 @@ fn failed_construction_preserves_selection_history_and_document() {
         assert_eq!(editor.doc.encode().unwrap(), before);
         assert_eq!(editor.selection_order, vec![2, 1]);
         assert_eq!(editor.doc.selected, [1, 2].into());
-        assert_eq!((editor.doc.undo.len(), editor.doc.redo.len()), history);
+        assert_eq!((editor.doc.undo_len(), editor.doc.redo_len()), history);
     }
     assert!(
         call(
@@ -234,7 +237,7 @@ fn all_construction_kinds_create_serializable_objects() {
         doc.add(Kind::Circle(1, 2));
         doc.add(Kind::CenterArc(1, 2, 3));
         let mut editor = Editor::new(doc);
-        let history = editor.doc.undo.len();
+        let history = editor.doc.undo_len();
         let result = call(
             &mut editor,
             "construct",
@@ -242,12 +245,16 @@ fn all_construction_kinds_create_serializable_objects() {
         )
         .unwrap_or_else(|error| panic!("{kind}: {error}"));
         assert!(!result["created_ids"].as_array().unwrap().is_empty());
-        assert_eq!(editor.doc.undo.len(), history + 1, "{kind}");
+        assert_eq!(editor.doc.undo_len(), history + 1, "{kind}");
         let saved = editor.doc.encode().unwrap();
         let reopened = Document::from_bytes(&saved, None).unwrap();
-        assert_eq!(reopened.objects.len(), editor.doc.objects.len(), "{kind}");
+        assert_eq!(
+            reopened.objects().len(),
+            editor.doc.objects().len(),
+            "{kind}"
+        );
         call(&mut editor, "undo", json!({})).unwrap();
-        assert_eq!(editor.doc.objects.len(), 6, "{kind}");
+        assert_eq!(editor.doc.objects().len(), 6, "{kind}");
     }
 }
 
@@ -274,5 +281,5 @@ fn construction_uses_the_active_page_of_imported_documents() {
     .unwrap();
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.page_count, 2);
-    assert_eq!(reopened.objects.last().unwrap().page, 1);
+    assert_eq!(reopened.objects().last().unwrap().page, 1);
 }

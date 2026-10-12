@@ -475,7 +475,7 @@ pub(crate) fn font_context(doc: &Document) -> egui::Context {
     super::system_fonts::add_cjk_fallbacks(&mut definitions);
     let mut families = doc.text_font_families().unwrap_or_default();
     families.extend(
-        doc.objects
+        doc.objects()
             .iter()
             .filter_map(|o| doc.text_font_state(o.id).map(|f| f.family)),
     );

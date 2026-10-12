@@ -86,7 +86,7 @@ fn external_bisector_animation_updates_table_values() {
         scale: 1.,
         center: editor.center,
     };
-    let Kind::AnimationButton { anchor, label, .. } = &editor.doc.objects[1494].kind else {
+    let Kind::AnimationButton { anchor, label, .. } = &editor.doc.objects()[1494].kind else {
         panic!("Expected animation button")
     };
     let click = crate::render::action_button_rect(&viewport, *anchor, label).center();
@@ -234,7 +234,7 @@ fn external_math_measurement_captions_match_native() {
     let (_, lines) = crate::render::number_lines_for_object(&doc, 3324).unwrap();
     assert_eq!(lines, vec!["(PA ÷ PB) = 2.36"]);
     let mut named = 0;
-    for object in doc.objects.iter() {
+    for object in doc.objects().iter() {
         if object.kind.is_measurement()
             && let Some(label) = &object.label
             && let Ok(name) = label.name_utf8()
@@ -271,7 +271,10 @@ fn named_scalar_captions_reach_desktop_svg_and_undefined_slope() {
         (13, "距离", "1.30319"),
         (14, "斜率", "0.0000"),
     ] {
-        doc.objects.edit(id - 1).label = Some(LabelAux::new_point(name, false, (0, 0)).unwrap());
+        doc.edit_object(id, |object| {
+            object.label = Some(LabelAux::new_point(name, false, (0, 0)).unwrap())
+        })
+        .unwrap();
         let caption = format!("{name} = {value}");
         assert!(Editor::overlay_rows_for(&doc).contains(&(id, caption.clone())));
         assert!(
@@ -419,7 +422,10 @@ fn one_host_measurements_work_on_multi_page_sketch() {
     editor.selection_order = vec![arc];
     editor.measure_shape(ShapeMeasure::Radius);
     let radius = *editor.doc.selected.iter().next().unwrap();
-    assert_eq!(editor.doc.objects[radius - 1].kind, Kind::CircleRadius(arc));
+    assert_eq!(
+        editor.doc.objects()[radius - 1].kind,
+        Kind::CircleRadius(arc)
+    );
     assert!(editor.doc.circle_radius_cm(radius).unwrap() > 0.);
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
     assert!(reopened.circle_radius_cm(radius).unwrap() > 0.);
@@ -439,7 +445,7 @@ fn one_host_measurements_work_on_multi_page_sketch() {
     editor.measure_arc_length();
     let circle_arc_length = *editor.doc.selected.iter().next().unwrap();
     assert_eq!(
-        editor.doc.objects[circle_arc_length - 1].kind,
+        editor.doc.objects()[circle_arc_length - 1].kind,
         Kind::CircleArcLength(circle, b, c)
     );
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
@@ -472,12 +478,12 @@ fn point_measurements_work_on_multi_page_sketch() {
     editor.measure_ratio();
     let ratio = *editor.doc.selected.iter().next().unwrap();
     assert_eq!(
-        editor.doc.objects[ratio - 1].kind,
+        editor.doc.objects()[ratio - 1].kind,
         Kind::SegmentRatio(first, second)
     );
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
     assert_eq!(
-        reopened.objects[ratio - 1].kind,
+        reopened.objects()[ratio - 1].kind,
         Kind::SegmentRatio(first, second)
     );
 }

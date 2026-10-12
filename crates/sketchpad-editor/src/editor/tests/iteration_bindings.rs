@@ -28,12 +28,15 @@ fn selected_geometry_iteration(shape: usize) -> (Editor, usize, Viewport) {
     );
     let parent = *editor.doc.selected.iter().next().unwrap();
     assert!(matches!(
-        editor.doc.objects[parent - 1].kind,
+        editor.doc.objects()[parent - 1].kind,
         Kind::MappedPointIteration { .. }
     ));
     let binding = parent + 1;
-    for mut object in editor.doc.objects.iter_mut() {
-        object.visible = object.id == binding;
+    for id in 1..=editor.doc.objects().len() {
+        editor
+            .doc
+            .edit_object(id, |object| object.visible = id == binding)
+            .unwrap();
     }
     let viewport = Viewport {
         rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
@@ -85,8 +88,8 @@ fn selected_geometry_iterations_render_pick_and_keep_independent_styles() {
         }
         let saved = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
         assert_eq!(
-            saved.objects[binding - 1].visual_style,
-            editor.doc.objects[binding - 1].visual_style
+            saved.objects()[binding - 1].visual_style,
+            editor.doc.objects()[binding - 1].visual_style
         );
         editor.doc.set_selected_visibility(false);
         assert_ne!(editor.hit(&vp, vp.screen(point)), Some(binding));

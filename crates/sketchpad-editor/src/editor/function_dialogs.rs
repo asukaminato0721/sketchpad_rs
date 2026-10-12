@@ -6,10 +6,10 @@ use sketchpad_engine::plot_points_records::PlotPointsMode;
 
 impl Editor {
     pub(super) fn begin_function_dialog(&mut self, plot: bool, edit_id: Option<usize>) {
-        self.function_edit_id = edit_id;
-        self.function_dialog = Some(plot);
-        self.function_angle_dialog = None;
-        self.function_draft_sources = if let Some(id) = edit_id {
+        self.dialogs.function_edit_id = edit_id;
+        self.dialogs.function_dialog = Some(plot);
+        self.dialogs.function_angle_dialog = None;
+        self.dialogs.function_draft_sources = if let Some(id) = edit_id {
             self.doc.function_sources(id).unwrap_or_default().to_vec()
         } else {
             let mut selected = self
@@ -27,7 +27,7 @@ impl Editor {
                 .into_iter()
                 .filter(|&id| {
                     self.doc
-                        .objects
+                        .objects()
                         .get(id.saturating_sub(1))
                         .is_some_and(|object| {
                             !object.deleted
@@ -39,7 +39,7 @@ impl Editor {
                 .collect()
         };
         if let Some(id) = edit_id {
-            self.function_draft = match &self.doc.objects[id - 1].kind {
+            self.dialogs.function_draft = match &self.doc.objects()[id - 1].kind {
                 Kind::FunctionDefinition(expression) | Kind::ReferencedFunction(_, expression) => {
                     expression
                         .display()
@@ -50,7 +50,7 @@ impl Editor {
                 _ => "x".into(),
             };
         } else {
-            self.function_draft = "x".into();
+            self.dialogs.function_draft = "x".into();
         }
     }
 
@@ -70,7 +70,7 @@ impl Editor {
             }
             return Ok(id);
         }
-        let sources = &self.function_draft_sources;
+        let sources = &self.dialogs.function_draft_sources;
         match (sources.is_empty(), plot, radians) {
             (true, false, None) => self.doc.add_function_definition(expression),
             (true, false, Some(radians)) => self
@@ -101,8 +101,8 @@ impl Editor {
     }
 
     pub(super) fn function_dialogs_ui(&mut self, root: &mut egui::Ui) {
-        if let Some(plot) = self.function_dialog {
-            let edit_id = self.function_edit_id;
+        if let Some(plot) = self.dialogs.function_dialog {
+            let edit_id = self.dialogs.function_edit_id;
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("new_function")).show(root.ctx(), |ui| {
@@ -114,10 +114,10 @@ impl Editor {
                     "New function"
                 }));
                 ui.label(tr("f(x) ="));
-                ui.text_edit_singleline(&mut self.function_draft);
+                ui.text_edit_singleline(&mut self.dialogs.function_draft);
                 ui.label(tr("Arithmetic in x; sin, cos, tan, asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants pi/π and e"));
-                for (index, &source) in self.function_draft_sources.iter().enumerate() {
-                    let object = &self.doc.objects[source - 1];
+                for (index, &source) in self.dialogs.function_draft_sources.iter().enumerate() {
+                    let object = &self.doc.objects()[source - 1];
                     let alias = if self.doc.function_sources(source).is_some() {
                         format!("f{}(…)", index + 1)
                     } else {
@@ -143,18 +143,18 @@ impl Editor {
                 });
             });
             if cancel {
-                self.function_dialog = None;
-                self.function_edit_id = None;
+                self.dialogs.function_dialog = None;
+                self.dialogs.function_edit_id = None;
             }
             if apply {
                 let result = SimpleFunction::parse_with_sources(
-                    &self.function_draft,
-                    self.function_draft_sources.len(),
+                    &self.dialogs.function_draft,
+                    self.dialogs.function_draft_sources.len(),
                 )
                 .and_then(|expr| {
                     if expr.uses_trigonometry() && !self.doc.angle_unit_radians {
-                        self.function_dialog = None;
-                        self.function_angle_dialog = Some((expr, plot, edit_id));
+                        self.dialogs.function_dialog = None;
+                        self.dialogs.function_angle_dialog = Some((expr, plot, edit_id));
                         return Ok(None);
                     }
                     self.apply_function_expression(expr, plot, edit_id, None)
@@ -163,8 +163,8 @@ impl Editor {
                 match result {
                     Ok(None) => {}
                     Ok(Some(id)) => {
-                        self.function_dialog = None;
-                        self.function_edit_id = None;
+                        self.dialogs.function_dialog = None;
+                        self.dialogs.function_edit_id = None;
                         self.select_only(id);
                         self.status = if edit_id.is_some() {
                             format!("Updated function object {id}")
@@ -176,7 +176,7 @@ impl Editor {
                 }
             }
         }
-        if let Some((expression, plot, edit_id)) = self.function_angle_dialog.clone() {
+        if let Some((expression, plot, edit_id)) = self.dialogs.function_angle_dialog.clone() {
             let mut choice = None;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("function_angle_unit")).show(root.ctx(), |ui| {
@@ -193,16 +193,16 @@ impl Editor {
                 });
             });
             if cancel {
-                self.function_angle_dialog = None;
-                self.function_edit_id = None;
+                self.dialogs.function_angle_dialog = None;
+                self.dialogs.function_edit_id = None;
             }
             if let Some(radians) = choice {
                 let result =
                     self.apply_function_expression(expression, plot, edit_id, Some(radians));
                 match result {
                     Ok(id) => {
-                        self.function_angle_dialog = None;
-                        self.function_edit_id = None;
+                        self.dialogs.function_angle_dialog = None;
+                        self.dialogs.function_edit_id = None;
                         self.select_only(id);
                         self.status = if edit_id.is_some() {
                             format!("Updated function object {id}")
@@ -214,7 +214,7 @@ impl Editor {
                 }
             }
         }
-        if let Some(source) = self.derivative_angle_dialog {
+        if let Some(source) = self.dialogs.derivative_angle_dialog {
             let mut choice = None;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("derivative_angle_unit")).show(root.ctx(), |ui| {
@@ -231,7 +231,7 @@ impl Editor {
                 });
             });
             if cancel {
-                self.derivative_angle_dialog = None;
+                self.dialogs.derivative_angle_dialog = None;
             }
             if let Some(radians) = choice {
                 match self
@@ -239,7 +239,7 @@ impl Editor {
                     .add_derivative_function_with_angle_unit(source, radians)
                 {
                     Ok(id) => {
-                        self.derivative_angle_dialog = None;
+                        self.dialogs.derivative_angle_dialog = None;
                         self.select_only(id);
                         self.status = format!("Created derivative function {id}");
                     }
@@ -247,8 +247,8 @@ impl Editor {
                 }
             }
         }
-        if let Some(plot) = self.plot_range_dialog {
-            let variable = match self.doc.objects.get(plot - 1).map(|o| &o.kind) {
+        if let Some(plot) = self.dialogs.plot_range_dialog {
+            let variable = match self.doc.objects().get(plot - 1).map(|o| &o.kind) {
                 Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::YFromX)) => "x",
                 Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::XFromY)) => "y",
                 Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::Polar)) => "θ",
@@ -260,29 +260,39 @@ impl Editor {
                 ui.heading(tr("Plot properties"));
                 ui.horizontal(|ui| {
                     ui.label(tr("Domain"));
-                    ui.add(egui::TextEdit::singleline(&mut self.plot_min_draft).desired_width(70.));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.dialogs.plot_min_draft)
+                            .desired_width(70.),
+                    );
                     ui.label(tr(format!("≤ {variable} ≤")));
-                    ui.add(egui::TextEdit::singleline(&mut self.plot_max_draft).desired_width(70.));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.dialogs.plot_max_draft)
+                            .desired_width(70.),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Samples"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.plot_samples_draft).desired_width(70.),
+                        egui::TextEdit::singleline(&mut self.dialogs.plot_samples_draft)
+                            .desired_width(70.),
                     );
                 });
                 if self.doc.plot_properties(plot).is_some() {
                     ui.radio_value(
-                        &mut self.plot_presentation_draft.discrete,
+                        &mut self.dialogs.plot_presentation_draft.discrete,
                         false,
                         tr("Continuously"),
                     );
                     ui.radio_value(
-                        &mut self.plot_presentation_draft.discrete,
+                        &mut self.dialogs.plot_presentation_draft.discrete,
                         true,
                         tr("Discretely"),
                     );
                     ui.checkbox(
-                        &mut self.plot_presentation_draft.show_arrows_and_endpoints,
+                        &mut self
+                            .dialogs
+                            .plot_presentation_draft
+                            .show_arrows_and_endpoints,
                         tr("Show arrows and endpoints"),
                     );
                 }
@@ -292,21 +302,24 @@ impl Editor {
                 });
             });
             if cancel {
-                self.plot_range_dialog = None;
+                self.dialogs.plot_range_dialog = None;
             }
             if apply {
                 let result = (|| -> Result<(), String> {
                     let min = self
+                        .dialogs
                         .plot_min_draft
                         .trim()
                         .parse::<f64>()
                         .map_err(|_| "Invalid domain start")?;
                     let max = self
+                        .dialogs
                         .plot_max_draft
                         .trim()
                         .parse::<f64>()
                         .map_err(|_| "Invalid domain end")?;
                     let samples = self
+                        .dialogs
                         .plot_samples_draft
                         .trim()
                         .parse::<u32>()
@@ -318,7 +331,7 @@ impl Editor {
                                 min,
                                 max,
                                 samples,
-                                self.plot_presentation_draft,
+                                self.dialogs.plot_presentation_draft,
                             )
                             .map(|_| ())
                     } else {
@@ -327,7 +340,7 @@ impl Editor {
                 })();
                 match result {
                     Ok(()) => {
-                        self.plot_range_dialog = None;
+                        self.dialogs.plot_range_dialog = None;
                         self.select_only(plot);
                         self.status = format!("Updated plot {plot}");
                     }
@@ -335,10 +348,10 @@ impl Editor {
                 }
             }
         }
-        if self.parametric_dialog {
+        if self.dialogs.parametric_dialog {
             let functions = self
                 .doc
-                .objects
+                .objects()
                 .iter()
                 .filter_map(|object| {
                     if object.page != self.doc.active_page || object.deleted {
@@ -357,11 +370,11 @@ impl Editor {
                     egui::ComboBox::from_id_salt("parametric_x")
                         .selected_text(tr(functions
                             .iter()
-                            .find(|(id, _)| *id == self.parametric_x)
+                            .find(|(id, _)| *id == self.dialogs.parametric_x)
                             .map_or("Select function", |(_, label)| label.as_str())))
                         .show_ui(ui, |ui| {
                             for (id, label) in &functions {
-                                ui.selectable_value(&mut self.parametric_x, *id, label);
+                                ui.selectable_value(&mut self.dialogs.parametric_x, *id, label);
                             }
                         });
                 });
@@ -370,22 +383,22 @@ impl Editor {
                     egui::ComboBox::from_id_salt("parametric_y")
                         .selected_text(tr(functions
                             .iter()
-                            .find(|(id, _)| *id == self.parametric_y)
+                            .find(|(id, _)| *id == self.dialogs.parametric_y)
                             .map_or("Select function", |(_, label)| label.as_str())))
                         .show_ui(ui, |ui| {
                             for (id, label) in &functions {
-                                ui.selectable_value(&mut self.parametric_y, *id, label);
+                                ui.selectable_value(&mut self.dialogs.parametric_y, *id, label);
                             }
                         });
                 });
                 ui.horizontal(|ui| {
                     ui.radio_value(
-                        &mut self.parametric_mode,
+                        &mut self.dialogs.parametric_mode,
                         PlotPointsMode::Cartesian,
                         tr("Rectangular"),
                     );
                     ui.radio_value(
-                        &mut self.parametric_mode,
+                        &mut self.dialogs.parametric_mode,
                         PlotPointsMode::Polar,
                         tr("Polar"),
                     );
@@ -393,12 +406,12 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(tr("Domain"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parametric_min_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parametric_min_draft)
                             .desired_width(65.),
                     );
                     ui.label(tr("≤ t ≤"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parametric_max_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parametric_max_draft)
                             .desired_width(65.),
                     );
                 });
@@ -408,24 +421,26 @@ impl Editor {
                 });
             });
             if cancel {
-                self.parametric_dialog = false;
+                self.dialogs.parametric_dialog = false;
             }
             if apply {
                 let result = (|| -> Result<usize, String> {
                     let min = self
+                        .dialogs
                         .parametric_min_draft
                         .trim()
                         .parse::<f64>()
                         .map_err(|_| "Invalid domain start")?;
                     let max = self
+                        .dialogs
                         .parametric_max_draft
                         .trim()
                         .parse::<f64>()
                         .map_err(|_| "Invalid domain end")?;
                     self.doc.plot_parametric_curve(
-                        self.parametric_x,
-                        self.parametric_y,
-                        self.parametric_mode,
+                        self.dialogs.parametric_x,
+                        self.dialogs.parametric_y,
+                        self.dialogs.parametric_mode,
                         min,
                         max,
                         self.center,
@@ -433,7 +448,7 @@ impl Editor {
                 })();
                 match result {
                     Ok(id) => {
-                        self.parametric_dialog = false;
+                        self.dialogs.parametric_dialog = false;
                         self.select_only(id);
                         self.status = format!("Plotted parametric curve {id}");
                     }

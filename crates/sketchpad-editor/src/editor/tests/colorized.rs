@@ -52,8 +52,8 @@ fn color_command_preserves_channel_selection_order_and_rejects_invalid_batch() {
     editor.colorize_selected(ColorModel::Rgb);
     assert_eq!(editor.doc.encode().unwrap(), before);
     let caption = editor.doc.add(Kind::Unsupported(999));
-    let count = editor.doc.objects.len();
+    let count = editor.doc.objects().len();
     editor.selection_order = vec![point, caption, r];
     editor.colorize_selected(ColorModel::Grayscale);
-    assert_eq!(editor.doc.objects.len(), count);
+    assert_eq!(editor.doc.objects().len(), count);
 }

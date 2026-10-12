@@ -163,29 +163,17 @@ struct Record {
 }
 
 fn records(bytes: &[u8], start: usize) -> Result<Vec<Record>, String> {
-    let mut at = start;
-    let mut result = Vec::new();
-    while at < bytes.len() {
-        if at + 8 > bytes.len() {
-            return Err("Truncated GSP record".into());
-        }
-        let len = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
-        let payload = at + 8;
-        let end = payload
-            .checked_add(len + len % 2)
-            .ok_or("GSP record length overflow")?;
-        if end > bytes.len() {
-            return Err("Truncated GSP payload".into());
-        }
-        result.push(Record {
-            kind: u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()),
-            start: at,
-            payload,
-            end,
-        });
-        at = end;
-    }
-    Ok(result)
+    sketchpad_format::records_from(bytes, start).map(|records| {
+        records
+            .into_iter()
+            .map(|record| Record {
+                kind: record.kind,
+                start: record.start,
+                end: record.end,
+                payload: record.data.start,
+            })
+            .collect()
+    })
 }
 
 fn table_template() -> Vec<u8> {
@@ -215,6 +203,10 @@ fn object_group(document: &[u8], ordinal: usize) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterGroup {
     bytes: Vec<u8>,
+    // Parsed semantic state. Presentation edits preserve it; value edits rebuild
+    // it together with the native records. Evaluation never reparses the bytes.
+    value: [u8; 8],
+    unit: NumericUnit,
     // Legacy parameter labels can be GBK while their source bytes stay opaque.
     name: String,
     // Sampling a native parameter trace must use the exact floating-point
@@ -565,6 +557,13 @@ impl ParameterGroup {
         };
         let group = Self {
             bytes: bytes.to_vec(),
+            value: (if literal.suffix == Some(0x0100) {
+                literal.value / (CALCULATOR_PI / 180.)
+            } else {
+                literal.value
+            })
+            .to_le_bytes(),
+            unit,
             name,
             evaluation_value: None,
         };
@@ -758,11 +757,7 @@ impl ParameterGroup {
         Ok(())
     }
     pub fn unit(&self) -> NumericUnit {
-        match u16::from_le_bytes(self.bytes[16..18].try_into().unwrap()) {
-            80 => NumericUnit::Length,
-            81 => NumericUnit::Degrees,
-            _ => NumericUnit::Scalar,
-        }
+        self.unit
     }
     /// Native units per displayed unit, including button animation ranges and rates.
     pub fn native_unit_scale(&self) -> f64 {
@@ -791,15 +786,7 @@ impl ParameterGroup {
         parameter_literal(&words, self.unit()).unwrap()
     }
     pub fn value(&self) -> f64 {
-        if let Some(value) = self.evaluation_value {
-            return f64::from_le_bytes(value);
-        }
-        let literal = self.literal();
-        if literal.suffix == Some(0x0100) {
-            literal.value / self.native_unit_scale()
-        } else {
-            literal.value
-        }
+        f64::from_le_bytes(self.evaluation_value.unwrap_or(self.value))
     }
 
     pub fn value_text(&self) -> String {
@@ -947,9 +934,7 @@ impl ParameterGroup {
             i16::try_from(i32::from(old_right) + if resize_caption { width_delta } else { 0 })
                 .map_err(|_| "Parameter box coordinate overflow")?;
         updated[right..right + 2].copy_from_slice(&new_right.to_le_bytes());
-        Self::parse(&updated)?;
-        self.bytes = updated;
-        self.evaluation_value = None;
+        *self = Self::parse(&updated)?;
         Ok(())
     }
     pub(crate) fn set_evaluation_value(&mut self, value: f64) -> bool {

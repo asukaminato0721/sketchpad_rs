@@ -6,7 +6,7 @@ impl Editor {
     pub(super) fn begin_parameter_dialog(&mut self, id: usize) -> Result<(), String> {
         let Some(Kind::Parameter(group)) = self
             .doc
-            .objects
+            .objects()
             .get(id.checked_sub(1).ok_or("Invalid parameter ID")?)
             .filter(|object| !object.deleted && object.page == self.doc.active_page)
             .map(|object| &object.kind)
@@ -14,25 +14,25 @@ impl Editor {
             return Err("Select a parameter on the active page".into());
         };
         let settings = group.animation_settings();
-        self.parameter_value_draft = group.value().to_string();
-        self.parameter_precision_draft = group.precision();
-        self.parameter_display_mode_draft = group.display_mode();
-        self.parameter_original_display_mode = group.display_mode() == 0;
-        self.parameter_edit_box_draft = group.includes_edit_box();
-        self.parameter_discrete_draft = settings.discrete;
-        self.parameter_rate_units_draft = settings.rate_units.to_string();
-        self.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
-        self.parameter_min_draft = settings.domain.0.to_string();
-        self.parameter_max_draft = settings.domain.1.to_string();
-        self.parameter_keyboard_step_draft = settings.keyboard_step.to_string();
-        self.parameter_value_dialog = Some(id);
+        self.dialogs.parameter_value_draft = group.value().to_string();
+        self.dialogs.parameter_precision_draft = group.precision();
+        self.dialogs.parameter_display_mode_draft = group.display_mode();
+        self.dialogs.parameter_original_display_mode = group.display_mode() == 0;
+        self.dialogs.parameter_edit_box_draft = group.includes_edit_box();
+        self.dialogs.parameter_discrete_draft = settings.discrete;
+        self.dialogs.parameter_rate_units_draft = settings.rate_units.to_string();
+        self.dialogs.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
+        self.dialogs.parameter_min_draft = settings.domain.0.to_string();
+        self.dialogs.parameter_max_draft = settings.domain.1.to_string();
+        self.dialogs.parameter_keyboard_step_draft = settings.keyboard_step.to_string();
+        self.dialogs.parameter_value_dialog = Some(id);
         Ok(())
     }
 
     pub(super) fn begin_edit_definition(&mut self, id: usize) -> Result<(), String> {
         let object = self
             .doc
-            .objects
+            .objects()
             .get(id.checked_sub(1).ok_or("Invalid object ID")?)
             .filter(|object| !object.deleted && object.page == self.doc.active_page)
             .ok_or("Select one editable definition on the active page")?;
@@ -47,17 +47,17 @@ impl Editor {
             return self.begin_parameter_dialog(id);
         }
         if let Kind::Calculation(group) = &object.kind {
-            self.calculation_draft = group.expression();
-            self.calculation_edit_id = Some(id);
-            self.calculation_dialog = true;
+            self.dialogs.calculation_draft = group.expression();
+            self.dialogs.calculation_edit_id = Some(id);
+            self.dialogs.calculation_dialog = true;
             return Ok(());
         }
         Err("Select one supported calculation, function, or numeric parameter".into())
     }
 
     pub(super) fn calculation_dialogs_ui(&mut self, root: &mut egui::Ui) {
-        if self.calculation_dialog {
-            let edit_id = self.calculation_edit_id;
+        if self.dialogs.calculation_dialog {
+            let edit_id = self.dialogs.calculation_edit_id;
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("calculation_expression")).show(root.ctx(), |ui| {
@@ -66,28 +66,28 @@ impl Editor {
                 } else {
                     "Calculate"
                 }));
-                ui.text_edit_singleline(&mut self.calculation_draft);
+                ui.text_edit_singleline(&mut self.dialogs.calculation_draft);
                 ui.label(tr(
-                    if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
+                    if self.doc.selected.iter().any(|&id| self.doc.objects().get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
                         "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order"
                     } else if self.doc.selected.len() >= 2 {
                         "Use v1, v2, … in selection order; a and b also name the first two values"
                     } else if self.doc.selected.len() == 1
                         && self.doc.selected.iter().next().is_some_and(|&id| {
                             self.doc
-                                .objects
+                                .objects()
                                 .get(id - 1)
                                 .is_some_and(|object| object.kind.is_distance_value())
                         })
                     {
                         "Selected length: × factor, ÷ divisor, or an expression using v"
-                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| object.kind.numeric_unit().is_some())) {
+                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects().get(id - 1).is_some_and(|object| object.kind.numeric_unit().is_some())) {
                         "Use a parameter by name, or a selected numeric value as v; degree literals use °"
                     } else {
                         "Enter numbers, arithmetic, functions, pi/π, e, and cm, degree, or radian literals"
                     }),
                 );
-                if self.doc.selected.iter().all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {
+                if self.doc.selected.iter().all(|&id| self.doc.objects().get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {
                     ui.label(tr("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e"));
                 }
                 ui.horizontal(|ui| {
@@ -98,18 +98,18 @@ impl Editor {
                 });
             });
             if cancel {
-                self.calculation_dialog = false;
-                self.calculation_edit_id = None;
+                self.dialogs.calculation_dialog = false;
+                self.dialogs.calculation_edit_id = None;
             }
             if apply {
                 if let Some(id) = edit_id {
                     match self
                         .doc
-                        .set_calculation_expression(id, self.calculation_draft.trim())
+                        .set_calculation_expression(id, self.dialogs.calculation_draft.trim())
                     {
                         Ok(()) => {
-                            self.calculation_dialog = false;
-                            self.calculation_edit_id = None;
+                            self.dialogs.calculation_dialog = false;
+                            self.dialogs.calculation_edit_id = None;
                             self.status = format!("Updated calculation {id}");
                         }
                         Err(error) => self.status = error,
@@ -120,7 +120,7 @@ impl Editor {
                 let selected_length = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
                         self.doc
-                            .objects
+                            .objects()
                             .get(id - 1)
                             .is_some_and(|object| object.kind.is_distance_value())
                     })
@@ -130,14 +130,14 @@ impl Editor {
                 let selected_parameter = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
                         self.doc
-                            .objects
+                            .objects()
                             .get(id - 1)
                             .is_some_and(|object| object.kind.numeric_unit().is_some())
                     })
                 } else {
                     None
                 };
-                let draft = self.calculation_draft.trim();
+                let draft = self.dialogs.calculation_draft.trim();
                 let measured = draft
                     .strip_prefix(['*', '×', '·'])
                     .map(|value| (value, false))
@@ -156,7 +156,7 @@ impl Editor {
                     if pair_ids.len() == 2
                         && pair_ids
                             .iter()
-                            .all(|id| self.doc.objects[*id - 1].kind.is_distance_value())
+                            .all(|id| self.doc.objects()[*id - 1].kind.is_distance_value())
                     {
                         match compact.as_str() {
                             "a+b" => self.doc.add_length_pair_calculation(
@@ -206,7 +206,7 @@ impl Editor {
                     self.doc.add_parameter_calculation(source, draft, (10, y))
                 } else if self.doc.selected.len() == 1
                     && self.doc.selected.iter().next().is_some_and(|&id| {
-                        self.doc.objects.get(id - 1).is_some_and(|object| {
+                        self.doc.objects().get(id - 1).is_some_and(|object| {
                             matches!(
                                 object.kind,
                                 Kind::FunctionDefinition(_)
@@ -226,15 +226,15 @@ impl Editor {
                 };
                 match result {
                     Ok(id) => {
-                        self.calculation_dialog = false;
-                        self.calculation_edit_id = None;
+                        self.dialogs.calculation_dialog = false;
+                        self.dialogs.calculation_edit_id = None;
                         self.status = format!("Created calculation {id}");
                     }
                     Err(error) => self.status = error,
                 }
             }
         }
-        if self.iterate_dialog {
+        if self.dialogs.iterate_dialog {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
@@ -244,7 +244,7 @@ impl Editor {
                 ui.label(tr("For numeric mappings, also select the parameter, calculation, and attached label, with an optional separate depth value. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter."));
                 ui.horizontal(|ui| {
                     ui.label(tr("Depth"));
-                    ui.text_edit_singleline(&mut self.iteration_depth_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.iteration_depth_draft);
                 });
                 ui.horizontal(|ui| {
                     apply = ui.button(tr("Create")).clicked();
@@ -252,32 +252,32 @@ impl Editor {
                 });
             });
             if cancel {
-                self.iterate_dialog = false;
+                self.dialogs.iterate_dialog = false;
             }
             if apply {
-                match self.iteration_depth_draft.trim().parse::<u32>() {
+                match self.dialogs.iteration_depth_draft.trim().parse::<u32>() {
                     Ok(depth) => {
                         self.iterate_selected(depth);
                         if self.status.starts_with("Created iteration ") {
-                            self.iterate_dialog = false;
+                            self.dialogs.iterate_dialog = false;
                         }
                     }
                     Err(_) => self.status = "Enter an iteration depth from 1 to 128".into(),
                 }
             }
         }
-        if self.named_parameter_dialog {
+        if self.dialogs.named_parameter_dialog {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("named_parameter")).show(root.ctx(), |ui| {
                 ui.heading(tr("New named parameter"));
                 ui.horizontal(|ui| {
                     ui.label(tr("Name"));
-                    ui.text_edit_singleline(&mut self.parameter_name_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.parameter_name_draft);
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Value"));
-                    ui.text_edit_singleline(&mut self.parameter_value_draft);
+                    ui.text_edit_singleline(&mut self.dialogs.parameter_value_draft);
                 });
                 ui.label(tr("Finite values, up to 32 native numeric tokens"));
                 ui.horizontal(|ui| {
@@ -286,10 +286,11 @@ impl Editor {
                 });
             });
             if cancel {
-                self.named_parameter_dialog = false;
+                self.dialogs.named_parameter_dialog = false;
             }
             if apply {
                 let result = self
+                    .dialogs
                     .parameter_value_draft
                     .trim()
                     .parse::<f64>()
@@ -297,7 +298,7 @@ impl Editor {
                     .and_then(|value| {
                         let parameter_count = self
                             .doc
-                            .objects
+                            .objects()
                             .iter()
                             .filter(|object| matches!(object.kind, Kind::Parameter(_)))
                             .count();
@@ -307,21 +308,21 @@ impl Editor {
                             .and_then(|y| i16::try_from(y).ok())
                             .ok_or("Too many parameters")?;
                         self.doc.add_named_parameter(
-                            self.parameter_name_draft.trim(),
+                            self.dialogs.parameter_name_draft.trim(),
                             value,
                             (10, y),
                         )
                     });
                 match result {
                     Ok(id) => {
-                        self.named_parameter_dialog = false;
+                        self.dialogs.named_parameter_dialog = false;
                         self.status = format!("Created parameter {id}");
                     }
                     Err(error) => self.status = error,
                 }
             }
         }
-        if let Some(id) = self.parameter_value_dialog {
+        if let Some(id) = self.dialogs.parameter_value_dialog {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("parameter_value")).show(root.ctx(), |ui| {
@@ -329,14 +330,14 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(tr("Value"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_value_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_value_draft)
                             .desired_width(90.),
                     );
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Precision"));
                     egui::ComboBox::from_id_salt("parameter_precision")
-                        .selected_text(tr(match self.parameter_precision_draft {
+                        .selected_text(tr(match self.dialogs.parameter_precision_draft {
                             0 => "units",
                             1 => "tenths",
                             2 => "hundredths",
@@ -354,7 +355,7 @@ impl Editor {
                                 (5, "hundred-thousandths"),
                             ] {
                                 ui.selectable_value(
-                                    &mut self.parameter_precision_draft,
+                                    &mut self.dialogs.parameter_precision_draft,
                                     precision,
                                     name,
                                 );
@@ -364,53 +365,57 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(tr("Display"));
                     egui::ComboBox::from_id_salt("parameter_display_mode")
-                        .selected_text(tr(match self.parameter_display_mode_draft {
+                        .selected_text(tr(match self.dialogs.parameter_display_mode_draft {
                             0 => "Original definition",
                             1 => "Value only",
                             _ => "Current name",
                         }))
                         .show_ui(ui, |ui| {
-                            if self.parameter_original_display_mode {
+                            if self.dialogs.parameter_original_display_mode {
                                 ui.selectable_value(
-                                    &mut self.parameter_display_mode_draft,
+                                    &mut self.dialogs.parameter_display_mode_draft,
                                     0,
                                     tr("Original definition"),
                                 );
                             }
                             ui.selectable_value(
-                                &mut self.parameter_display_mode_draft,
+                                &mut self.dialogs.parameter_display_mode_draft,
                                 1,
                                 tr("Value only"),
                             );
                             ui.selectable_value(
-                                &mut self.parameter_display_mode_draft,
+                                &mut self.dialogs.parameter_display_mode_draft,
                                 3,
                                 tr("Current name"),
                             );
                         });
                 });
                 ui.checkbox(
-                    &mut self.parameter_edit_box_draft,
+                    &mut self.dialogs.parameter_edit_box_draft,
                     tr("Show edit box (double-click to edit)"),
                 );
                 ui.horizontal(|ui| {
                     ui.label(tr("Change"));
                     ui.radio_value(
-                        &mut self.parameter_discrete_draft,
+                        &mut self.dialogs.parameter_discrete_draft,
                         false,
                         tr("Continuously"),
                     );
-                    ui.radio_value(&mut self.parameter_discrete_draft, true, tr("Discretely"));
+                    ui.radio_value(
+                        &mut self.dialogs.parameter_discrete_draft,
+                        true,
+                        tr("Discretely"),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("By"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_rate_units_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_rate_units_draft)
                             .desired_width(70.),
                     );
                     ui.label(tr("units per"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_rate_seconds_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_rate_seconds_draft)
                             .desired_width(70.),
                     );
                     ui.label(tr("seconds"));
@@ -418,19 +423,19 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(tr("Animation domain"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_min_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_min_draft)
                             .desired_width(70.),
                     );
                     ui.label(tr("to"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_max_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_max_draft)
                             .desired_width(70.),
                     );
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Keyboard (+/−) adjustment"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.parameter_keyboard_step_draft)
+                        egui::TextEdit::singleline(&mut self.dialogs.parameter_keyboard_step_draft)
                             .desired_width(70.),
                     );
                 });
@@ -441,7 +446,7 @@ impl Editor {
                 });
             });
             if cancel {
-                self.parameter_value_dialog = None;
+                self.dialogs.parameter_value_dialog = None;
             }
             if apply {
                 let parse = |name: &str, draft: &str| {
@@ -451,32 +456,35 @@ impl Editor {
                         .map_err(|_| format!("Enter a numeric {name}"))
                 };
                 let result = (|| {
-                    let value = parse("value", &self.parameter_value_draft)?;
+                    let value = parse("value", &self.dialogs.parameter_value_draft)?;
                     let settings = ParameterAnimationSettings {
-                        discrete: self.parameter_discrete_draft,
-                        rate_units: parse("rate", &self.parameter_rate_units_draft)?,
-                        rate_seconds: parse("rate interval", &self.parameter_rate_seconds_draft)?,
+                        discrete: self.dialogs.parameter_discrete_draft,
+                        rate_units: parse("rate", &self.dialogs.parameter_rate_units_draft)?,
+                        rate_seconds: parse(
+                            "rate interval",
+                            &self.dialogs.parameter_rate_seconds_draft,
+                        )?,
                         domain: (
-                            parse("domain minimum", &self.parameter_min_draft)?,
-                            parse("domain maximum", &self.parameter_max_draft)?,
+                            parse("domain minimum", &self.dialogs.parameter_min_draft)?,
+                            parse("domain maximum", &self.dialogs.parameter_max_draft)?,
                         ),
                         keyboard_step: parse(
                             "keyboard adjustment",
-                            &self.parameter_keyboard_step_draft,
+                            &self.dialogs.parameter_keyboard_step_draft,
                         )?,
                     };
                     self.doc.set_parameter_properties(
                         id,
                         value,
-                        self.parameter_precision_draft,
-                        self.parameter_display_mode_draft,
-                        self.parameter_edit_box_draft,
+                        self.dialogs.parameter_precision_draft,
+                        self.dialogs.parameter_display_mode_draft,
+                        self.dialogs.parameter_edit_box_draft,
                         settings,
                     )
                 })();
                 match result {
                     Ok(()) => {
-                        self.parameter_value_dialog = None;
+                        self.dialogs.parameter_value_dialog = None;
                         self.status = format!("Updated parameter {id}");
                     }
                     Err(error) => self.status = error,

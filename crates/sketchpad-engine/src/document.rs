@@ -63,6 +63,7 @@ mod plotting;
 mod point_numeric_labels;
 mod records;
 mod save;
+pub use save::SaveOutcome;
 mod segment_marker;
 mod selection;
 mod style;
@@ -868,7 +869,7 @@ pub struct DocumentSnapshot {
 }
 #[derive(Clone, Debug)]
 pub struct Document {
-    pub objects: ObjectStore,
+    pub(crate) objects: ObjectStore,
     pub path: Option<PathBuf>,
     pub selected: BTreeSet<usize>,
     pub dirty: bool,
@@ -899,8 +900,9 @@ pub struct Document {
     custom_transform_definitions: Vec<CustomTransformDefinition>,
     safe_structure: bool,
     image_read_only: bool,
-    pub undo: Vec<DocumentSnapshot>,
-    pub redo: Vec<DocumentSnapshot>,
+    history_suspended: bool,
+    pub(crate) undo: Vec<DocumentSnapshot>,
+    pub(crate) redo: Vec<DocumentSnapshot>,
 }
 
 impl Default for Document {

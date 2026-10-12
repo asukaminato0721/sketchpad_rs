@@ -13,6 +13,7 @@ mod animation_sources;
 mod carried_iteration;
 mod colorized;
 mod display_controls;
+mod edit_boundaries;
 mod functions;
 mod iteration;
 mod marked_iteration;
