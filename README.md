@@ -204,9 +204,18 @@ Removing a page leaves Page Links to that page visible with an unavailable desti
 ## Interface language and layout
 
 Choose **Window → Language → 简体中文** to use Simplified Chinese.
-Choose **窗口 → 语言 → English** to return to English. The choice is saved in
-`$XDG_CONFIG_HOME/sketchpad_rs/language.json`, or in
-`~/.config/sketchpad_rs/language.json` when `XDG_CONFIG_HOME` is not set.
+Choose **窗口 → 语言 → English** to return to English. Each change saves the choice
+in the platform's user configuration directory:
+
+- Windows: `%APPDATA%\sketchpad_rs\config\language.json` (the Windows roaming application data folder).
+- macOS: `~/Library/Application Support/sketchpad_rs/language.json`.
+- Linux: `$XDG_CONFIG_HOME/sketchpad_rs/language.json`, or
+  `~/.config/sketchpad_rs/language.json` when `XDG_CONFIG_HOME` is unset or relative.
+
+Windows resolves its folder through the system API. It does not require `HOME`.
+If the platform file is absent, the editor also reads the old XDG or `HOME/.config`
+location. The next language selection saves to the platform directory.
+New and opened documents keep the selected interface language.
 The first launch uses English. Missing translations use English.
 Document captions, labels, formulas, and MCP tool names retain their original text.
 

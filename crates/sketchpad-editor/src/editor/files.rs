@@ -318,7 +318,9 @@ impl Editor {
         let clipboard = self.clipboard.take();
         let tool_folder = self.tool_folder.take();
         let preferences = self.preferences;
+        let language = self.language;
         *self = Self::new(document);
+        self.language = language;
         self.clipboard = clipboard;
         self.tool_folder = tool_folder;
         self.preferences = preferences;
