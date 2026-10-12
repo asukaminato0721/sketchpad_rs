@@ -1858,7 +1858,15 @@ impl Document {
                             && changed == *after
                     });
                     if !value_only {
-                        return Err("Multi-page parameter edit changes more than its value".into());
+                        let mut changed = before.clone();
+                        changed.set_value(after.value())?;
+                        changed.set_precision(after.precision())?;
+                        changed.set_display_mode(after.display_mode())?;
+                        changed.set_includes_edit_box(after.includes_edit_box())?;
+                        changed.set_animation_settings(after.animation_settings())?;
+                        if changed != *after {
+                            return Err("Parameter edit changes unsupported records".into());
+                        }
                     }
                     expected.kind = current.kind.clone();
                     Some(after.as_bytes().to_vec())
@@ -1901,6 +1909,22 @@ impl Document {
                     }
                     expected.kind = current.kind.clone();
                     Some(after.as_bytes().to_vec())
+                }
+                (before, after)
+                    if super::calculations::calculation_bytes(before).is_some()
+                        && super::calculations::calculation_bytes(after).is_some()
+                        && before != after =>
+                {
+                    let old = super::calculations::calculation_bytes(before).unwrap();
+                    let new = super::calculations::calculation_bytes(after).unwrap();
+                    if before.dependencies() != after.dependencies()
+                        || before.numeric_unit() != after.numeric_unit()
+                        || !crate::table_records::calculation_expression_only_edit(old, new)?
+                    {
+                        return Err("Calculation edit changes unsupported records".into());
+                    }
+                    expected.kind = current.kind.clone();
+                    Some(new.to_vec())
                 }
                 _ => None,
             };

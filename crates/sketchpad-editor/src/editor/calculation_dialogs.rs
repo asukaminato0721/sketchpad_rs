@@ -26,6 +26,7 @@ impl Editor {
         self.dialogs.parameter_max_draft = settings.domain.1.to_string();
         self.dialogs.parameter_keyboard_step_draft = settings.keyboard_step.to_string();
         self.dialogs.parameter_value_dialog = Some(id);
+        self.dialogs.numeric_dialog_error = None;
         Ok(())
     }
 
@@ -46,10 +47,17 @@ impl Editor {
         if matches!(object.kind, Kind::Parameter(_)) {
             return self.begin_parameter_dialog(id);
         }
-        if let Kind::Calculation(group) = &object.kind {
-            self.dialogs.calculation_draft = group.expression();
+        if matches!(
+            object.kind,
+            Kind::Calculation(_)
+                | Kind::ParameterCalculation(..)
+                | Kind::MeasuredCalculation(..)
+                | Kind::LengthPairCalculation(..)
+        ) {
+            self.dialogs.calculation_draft = self.doc.calculation_expression(id)?;
             self.dialogs.calculation_edit_id = Some(id);
             self.dialogs.calculation_dialog = true;
+            self.dialogs.numeric_dialog_error = None;
             return Ok(());
         }
         Err("Select one supported calculation, function, or numeric parameter".into())
@@ -67,7 +75,14 @@ impl Editor {
                     "Calculate"
                 }));
                 ui.text_edit_singleline(&mut self.dialogs.calculation_draft);
-                ui.label(tr(
+                if let Some(id) = edit_id {
+                    ui.label(tr("Use v1, v2, … for saved numeric sources and f1, f2, … for saved functions"));
+                    for (index, source) in self.doc.objects()[id - 1].kind.dependencies().iter().enumerate() {
+                        let prefix = if self.doc.objects()[*source - 1].kind.is_function() { "f" } else { "v" };
+                        ui.label(format!("{prefix}{} → #{source}", index + 1));
+                    }
+                } else {
+                    ui.label(tr(
                     if self.doc.selected.iter().any(|&id| self.doc.objects().get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
                         "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order"
                     } else if self.doc.selected.len() >= 2 {
@@ -86,7 +101,8 @@ impl Editor {
                     } else {
                         "Enter numbers, arithmetic, functions, pi/π, e, and cm, degree, or radian literals"
                     }),
-                );
+                    );
+                }
                 if self.doc.selected.iter().all(|&id| self.doc.objects().get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {
                     ui.label(tr("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e"));
                 }
@@ -96,10 +112,14 @@ impl Editor {
                         .clicked();
                     cancel = ui.button(tr("Cancel")).clicked();
                 });
+                if let Some(error) = &self.dialogs.numeric_dialog_error {
+                    ui.colored_label(ui.visuals().error_fg_color, tr(error));
+                }
             });
             if cancel {
                 self.dialogs.calculation_dialog = false;
                 self.dialogs.calculation_edit_id = None;
+                self.dialogs.numeric_dialog_error = None;
             }
             if apply {
                 if let Some(id) = edit_id {
@@ -111,8 +131,12 @@ impl Editor {
                             self.dialogs.calculation_dialog = false;
                             self.dialogs.calculation_edit_id = None;
                             self.status = format!("Updated calculation {id}");
+                            self.dialogs.numeric_dialog_error = None;
                         }
-                        Err(error) => self.status = error,
+                        Err(error) => {
+                            self.dialogs.numeric_dialog_error = Some(error.clone());
+                            self.status = error;
+                        }
                     }
                     return;
                 }
@@ -440,6 +464,9 @@ impl Editor {
                     );
                 });
                 ui.label(tr("The domain affects animation only"));
+                if let Some(error) = &self.dialogs.numeric_dialog_error {
+                    ui.colored_label(ui.visuals().error_fg_color, tr(error));
+                }
                 ui.horizontal(|ui| {
                     apply = ui.button(tr("Apply")).clicked();
                     cancel = ui.button(tr("Cancel")).clicked();
@@ -447,6 +474,7 @@ impl Editor {
             });
             if cancel {
                 self.dialogs.parameter_value_dialog = None;
+                self.dialogs.numeric_dialog_error = None;
             }
             if apply {
                 let parse = |name: &str, draft: &str| {
@@ -486,10 +514,106 @@ impl Editor {
                     Ok(()) => {
                         self.dialogs.parameter_value_dialog = None;
                         self.status = format!("Updated parameter {id}");
+                        self.dialogs.numeric_dialog_error = None;
                     }
-                    Err(error) => self.status = error,
+                    Err(error) => {
+                        self.dialogs.numeric_dialog_error = Some(error.clone());
+                        self.status = error;
+                    }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, FullOutput, PointerButton, Pos2};
+    use sketchpad_engine::document::Document;
+
+    fn frame(editor: &mut Editor, ctx: &egui::Context, events: Vec<Event>) -> FullOutput {
+        editor.language.activate();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(1100., 750.),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| editor.calculation_dialogs_ui(ui),
+        );
+        output.textures_delta.clear();
+        output
+    }
+
+    fn click_text(editor: &mut Editor, ctx: &egui::Context, label: &str) {
+        // Modal layout needs a frame before its stable position is available.
+        frame(editor, ctx, vec![]);
+        let output = frame(editor, ctx, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Missing dialog text: {label}"));
+        for pressed in [true, false] {
+            frame(
+                editor,
+                ctx,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn imported_binary_dialogs_apply_changes_and_show_errors() {
+        let doc = Document::from_bytes(
+            include_bytes!("../../../../tests/fixtures/decimal_to_binary_imported.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let ctx = egui::Context::default();
+        editor.begin_edit_definition(1).unwrap();
+        editor.dialogs.parameter_value_draft = "293".into();
+        click_text(&mut editor, &ctx, "Apply");
+        assert_eq!(
+            editor.dialogs.parameter_value_dialog, None,
+            "{}",
+            editor.status
+        );
+        assert_eq!(editor.doc.numeric_value(1), Some(293.));
+        // Keep a different selection to detect accidental rebinding to UI selection.
+        editor.select_only(15);
+        editor.begin_edit_definition(4).unwrap();
+        assert!(editor.dialogs.calculation_draft.contains("v2"));
+        editor.dialogs.calculation_draft = "v1-2*v2+1".into();
+        click_text(&mut editor, &ctx, "Update");
+        assert!(!editor.dialogs.calculation_dialog, "{}", editor.status);
+        assert_eq!(editor.doc.numeric_value(4), Some(2.));
+        editor.begin_edit_definition(4).unwrap();
+        editor.dialogs.calculation_draft = "v3+1".into();
+        click_text(&mut editor, &ctx, "Update");
+        assert!(editor.dialogs.calculation_dialog);
+        assert_eq!(editor.doc.numeric_value(4), Some(2.));
+        let error = editor.dialogs.numeric_dialog_error.clone().unwrap();
+        let output = frame(&mut editor, &ctx, vec![]);
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.text() == error)));
     }
 }

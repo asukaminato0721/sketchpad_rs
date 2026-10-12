@@ -351,7 +351,8 @@ impl Editor {
                                 Some((id, "Edit Function"))
                             }
                             Kind::Parameter(_) => Some((id, "Edit Parameter")),
-                            Kind::Calculation(_) => Some((id, "Edit Calculation")),
+                            Kind::Calculation(_) | Kind::ParameterCalculation(..)
+                            | Kind::MeasuredCalculation(..) | Kind::LengthPairCalculation(..) => Some((id, "Edit Calculation")),
                             _ => None,
                         })
                     } else {

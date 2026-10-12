@@ -1684,6 +1684,38 @@ impl<'a> ParameterExprParser<'a> {
     }
 }
 
+/// Check that an edit changes only a calculation's token stream and its lengths.
+pub(crate) fn calculation_expression_only_edit(
+    before: &[u8],
+    after: &[u8],
+) -> Result<bool, String> {
+    let old = records(before, 0)?;
+    let new = records(after, 0)?;
+    if old.len() != new.len() {
+        return Ok(false);
+    }
+    for (old, new) in old.iter().zip(&new) {
+        if old.kind != new.kind {
+            return Ok(false);
+        }
+        let a = &before[old.payload..old.end];
+        let b = &after[new.payload..new.end];
+        if old.kind == 0x0907 {
+            if a.len() < 92
+                || b.len() < 92
+                || [0..36, 40..44, 46..92]
+                    .iter()
+                    .any(|range| a[range.clone()] != b[range.clone()])
+            {
+                return Ok(false);
+            }
+        } else if a != b {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn calculation_words(expression: &str, source_name: &str) -> Result<Vec<u16>, String> {
     let names = [(source_name, 0)];
     calculation_words_for_sources(
@@ -2195,6 +2227,48 @@ impl ParameterCalculationGroup {
     }
     pub fn expression_for_sources(&self, names: &[&str]) -> String {
         self.expression_tree().display_names(names)
+    }
+    /// Change only the expression tokens. Keep the saved references and presentation.
+    pub fn set_expression(
+        &mut self,
+        expression: &str,
+        units: &[NumericUnit],
+    ) -> Result<(), String> {
+        let names = (1..=self.sources().len())
+            .flat_map(|n| [format!("v{n}"), format!("f{n}")])
+            .collect::<Vec<_>>();
+        let mut aliases = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), i / 2))
+            .collect::<Vec<_>>();
+        aliases.extend([("v", 0), ("a", 0)]);
+        if self.sources().len() > 1 {
+            aliases.push(("b", 1));
+        }
+        let words = calculation_words_for_sources(expression, &aliases)?;
+        if units.len() != self.sources().len()
+            || calculation_tree(&words)?.units(units)? != self.unit()
+        {
+            return Err("Expression must retain the calculation's numeric unit".into());
+        }
+        let rs = records(&self.bytes, 0)?;
+        let record = &rs[2];
+        let mut payload = self.bytes[record.payload..record.payload + 92].to_vec();
+        payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        for word in words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut bytes = self.bytes[..record.start].to_vec();
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&self.bytes[record.end..]);
+        let parsed = Self::parse(&bytes)?.with_source_units(units)?;
+        if parsed.source_kinds()? != self.source_kinds()? {
+            return Err("Expression must retain numeric and function source types".into());
+        }
+        *self = parsed;
+        Ok(())
     }
     pub fn units_for_sources(&self, units: &[NumericUnit]) -> Result<NumericUnit, String> {
         self.expression_tree().units(units)

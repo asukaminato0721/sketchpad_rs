@@ -421,6 +421,7 @@
   "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order": "按选择顺序，用 f1(…)、f2(…) 等表示函数，用 v1、v2 等表示数值",
   "Use fade effect": "使用淡入淡出效果",
   "Use the selected construction to define a custom tool.": "用所选构造定义自定义工具。",
+  "Use v1, v2, … for saved numeric sources and f1, f2, … for saved functions": "v1、v2 等表示原公式引用的数值；f1、f2 等表示原公式引用的函数",
   "Use v1, v2, … in selection order; a and b also name the first two values": "按选择顺序使用 v1、v2 等；a 和 b 也可表示前两个数值",
   "Value": "数值",
   "Value of Point": "点的值",

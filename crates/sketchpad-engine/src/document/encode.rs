@@ -126,7 +126,7 @@ impl Document {
         if !self.dirty {
             return Ok(self.original.clone());
         }
-        if self.image_read_only {
+        if self.image_read_only || (self.partial_view && self.page_count == 1) {
             return self.encode_existing_state();
         }
         if self.page_count

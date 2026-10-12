@@ -58,6 +58,7 @@ mod measurements;
 mod multi_page_actions;
 mod multi_page_editing;
 mod multi_page_geometry;
+mod numeric_definition_edits;
 mod numeric_iteration;
 mod numeric_precision;
 mod numeric_transforms;

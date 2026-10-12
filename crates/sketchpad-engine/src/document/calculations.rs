@@ -6,6 +6,16 @@ use crate::table_records::{
 };
 use crate::value_equation_records::ValueEquationKind;
 
+pub(super) fn calculation_bytes(kind: &Kind) -> Option<&[u8]> {
+    match kind {
+        Kind::Calculation(group) => Some(group.as_bytes()),
+        Kind::ParameterCalculation(_, group) => Some(group.as_bytes()),
+        Kind::MeasuredCalculation(_, group) => Some(group.as_bytes()),
+        Kind::LengthPairCalculation(_, _, group) => Some(group.as_bytes()),
+        _ => None,
+    }
+}
+
 pub(super) fn calculation_source_ids(
     first: usize,
     group: &ParameterCalculationGroup,
@@ -87,6 +97,15 @@ pub(super) fn parse_numeric_calculation(
 }
 
 impl Document {
+    fn can_edit_numeric_definition(&self) -> bool {
+        if self.page_count > 1 || self.partial_view || self.image_read_only {
+            self.source_count == self.objects.len()
+                && !self.objects.iter().any(|object| object.deleted)
+        } else {
+            !self.partial_view && self.safe_structure
+        }
+    }
+
     pub fn add_default_parameter(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot add a parameter in this sketch".into());
@@ -180,14 +199,7 @@ impl Document {
         checkpoint: bool,
         edit: impl FnOnce(&mut ParameterGroup) -> Result<(), String>,
     ) -> Result<(), String> {
-        if id == 0
-            || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
-            || (self.page_count > 1
-                && (self.source_count != self.objects.len()
-                    || self.objects.iter().any(|object| {
-                        object.deleted || matches!(object.kind, Kind::Unsupported(_))
-                    })))
-        {
+        if id == 0 || !self.can_edit_numeric_definition() {
             return Err("Cannot edit a parameter in this sketch".into());
         }
         let object = self.objects.get(id - 1).ok_or("Select a parameter")?;
@@ -249,7 +261,7 @@ impl Document {
         // Animation changes typed values only. Keep serialization and full-file
         // validation at explicit edits and save, rather than on every frame.
         // The existing-state writer preserves opaque image records.
-        if checkpoint && self.page_count > 1 {
+        if checkpoint && (self.page_count > 1 || self.partial_view || self.image_read_only) {
             let bytes = candidate.encode()?;
             candidate.validate_reparsed_document(&Self::from_bytes(&bytes, None)?)?;
         }
@@ -281,7 +293,7 @@ impl Document {
         id: usize,
         expression: &str,
     ) -> Result<(), String> {
-        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+        if !self.can_edit_numeric_definition() {
             return Err("Cannot edit a calculation in this sketch safely".into());
         }
         let object = self
@@ -289,14 +301,78 @@ impl Document {
             .get(id.checked_sub(1).ok_or("Invalid calculation ID")?)
             .filter(|object| !object.deleted && object.page == self.active_page)
             .ok_or("Select a calculation on the active page")?;
-        let Kind::Calculation(group) = &object.kind else {
-            return Err("Select a supported calculation".into());
-        };
-        let mut updated = group.clone();
-        updated.set_expression(expression)?;
+        let updated = self.edited_calculation_kind(&object.kind, expression)?;
+        let mut candidate = self.clone();
+        candidate.objects.edit(id - 1).kind = updated;
+        candidate.dirty = true;
+        let bytes = candidate.encode()?;
+        candidate.validate_reparsed_document(&Self::from_bytes(&bytes, None)?)?;
         self.checkpoint();
-        self.objects.edit(id - 1).kind = Kind::Calculation(updated);
+        candidate.undo = self.undo.clone();
+        candidate.redo = self.redo.clone();
+        *self = candidate;
         Ok(())
+    }
+
+    /// Expressions use v1, v2, ... and f1, f2, ... in saved reference order.
+    pub fn calculation_expression(&self, id: usize) -> Result<String, String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid calculation ID")?)
+            .filter(|object| !object.deleted && object.page == self.active_page)
+            .ok_or("Select a calculation on the active page")?;
+        Self::calculation_kind_expression(&object.kind)
+    }
+
+    pub(super) fn calculation_kind_expression(kind: &Kind) -> Result<String, String> {
+        if let Kind::Calculation(group) = kind {
+            return Ok(group.expression());
+        }
+        let group = ParameterCalculationGroup::parse(
+            calculation_bytes(kind).ok_or("Select a supported calculation")?,
+        )?;
+        let names = group
+            .source_kinds()?
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                format!(
+                    "{}{n}",
+                    if *kind == CalculationSourceKind::Function {
+                        "f"
+                    } else {
+                        "v"
+                    },
+                    n = i + 1
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(group.expression_for_sources(&names.iter().map(String::as_str).collect::<Vec<_>>()))
+    }
+
+    pub(super) fn edited_calculation_kind(
+        &self,
+        kind: &Kind,
+        expression: &str,
+    ) -> Result<Kind, String> {
+        if let Kind::Calculation(group) = kind {
+            let mut updated = group.clone();
+            updated.set_expression(expression)?;
+            return Ok(Kind::Calculation(updated));
+        }
+        let group = ParameterCalculationGroup::parse(
+            calculation_bytes(kind).ok_or("Select a supported calculation")?,
+        )?;
+        let refs = kind.dependencies();
+        let units = calculation_source_units(&group, &refs, &self.objects)
+            .ok_or("Invalid calculation sources")?;
+        let page_base = refs[0]
+            .checked_sub(group.source_id() as usize)
+            .ok_or("Invalid calculation source ID")?;
+        let mut group = group.with_source_units(&units)?;
+        group.set_expression(expression, &units)?;
+        parse_numeric_calculation(group.as_bytes(), &refs, &self.objects, page_base)
+            .ok_or_else(|| "Invalid calculation expression".into())
     }
     fn numeric_caption_height(&self, id: usize) -> usize {
         let Some(object) = id.checked_sub(1).and_then(|i| self.objects.get(i)) else {

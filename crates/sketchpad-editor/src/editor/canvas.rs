@@ -170,7 +170,10 @@ impl Editor {
                         match self.doc.objects()[id - 1].kind {
                             Kind::FunctionDefinition(_)
                             | Kind::ReferencedFunction(_, _)
-                            | Kind::Calculation(_) => {
+                            | Kind::Calculation(_)
+                            | Kind::ParameterCalculation(..)
+                            | Kind::MeasuredCalculation(..)
+                            | Kind::LengthPairCalculation(..) => {
                                 if let Err(error) = self.begin_edit_definition(id) {
                                     self.status = error;
                                 }

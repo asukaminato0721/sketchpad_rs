@@ -35,7 +35,7 @@ impl Document {
         if !self.dirty {
             return Ok(());
         }
-        if self.image_read_only {
+        if self.image_read_only || (self.partial_view && self.page_count == 1) {
             self.encode_existing_state()?;
             return Ok(());
         }
