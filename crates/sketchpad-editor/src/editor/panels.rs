@@ -338,15 +338,40 @@ impl Editor {
                 }
                 ui.separator();
                 if let Some(restriction) = self.doc.edit_restriction() {
-                    let reason = match restriction {
-                        EditRestriction::UnsupportedObjects => "Some objects are not supported",
-                        EditRestriction::ReadOnlyImages => "Editing imported images is limited",
-                        EditRestriction::MultiPageStructure => "Multi-page editing is limited",
-                        EditRestriction::UnrecognizedRecords => {
-                            "Editing is limited to preserve unfamiliar records"
+                    if restriction == EditRestriction::UnsupportedObjects {
+                        ui.colored_label(egui::Color32::DARK_RED, tr("Unsupported objects:"));
+                        for object in self.doc.objects().iter().filter(|object| !object.deleted) {
+                            let Kind::Unsupported(code) = object.kind else {
+                                continue;
+                            };
+                            let mut description = tr(format!(
+                                "Page {page}: object #{id} (type code {code})",
+                                page = object.page + 1,
+                                id = object.id,
+                            ));
+                            if let Some(name) = object
+                                .label
+                                .as_ref()
+                                .and_then(|label| label.name_utf8().ok())
+                                .filter(|name| !name.is_empty())
+                            {
+                                description.push_str(" · ");
+                                description
+                                    .push_str(&super::inspector_description::single_line(name));
+                            }
+                            ui.colored_label(egui::Color32::DARK_RED, description);
                         }
-                    };
-                    ui.colored_label(egui::Color32::DARK_RED, tr(reason));
+                    } else {
+                        let reason = match restriction {
+                            EditRestriction::ReadOnlyImages => "Editing imported images is limited",
+                            EditRestriction::MultiPageStructure => "Multi-page editing is limited",
+                            EditRestriction::UnrecognizedRecords => {
+                                "Editing is limited to preserve unfamiliar records"
+                            }
+                            EditRestriction::UnsupportedObjects => unreachable!(),
+                        };
+                        ui.colored_label(egui::Color32::DARK_RED, tr(reason));
+                    }
                 }
                 if self.doc.dirty {
                     ui.label(tr("Unsaved changes"));
